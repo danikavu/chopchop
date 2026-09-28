@@ -95,3 +95,44 @@ def test_distinct_hits_are_kept(tmp_path):
     track = {"name": "drums", "file": "tracks/drums.wav", "duration": 3.0}
     recs = kits.extract(tmp_path, track, "drums", similarity=0.93)
     assert [r["category"] for r in recs].count("kick") == 2
+
+
+def test_kit_counts_occurrences(tmp_path):
+    y, _ = synth.drum_loop(bars=4)  # 8 kicks, 8 snares, 16 hats
+    (tmp_path / "tracks").mkdir()
+    sf.write(tmp_path / "tracks" / "drums.wav", y, SR)
+    track = {"name": "drums", "file": "tracks/drums.wav", "duration": y.size / SR}
+    recs = kits.extract(tmp_path, track, "drums")
+    counts = {r["category"]: r["occurrences"] for r in recs}
+    assert counts == {"kick": 8, "snare": 8, "hihat": 16}
+
+
+def _cand(cat, emb, score, count=1):
+    e = np.asarray(emb, dtype=float)
+    return {"category": cat, "emb": e / np.linalg.norm(e), "score": score, "count": count}
+
+
+def test_dedupe_merges_duplicates_across_categories():
+    # The same sound labelled snare once and clap once must survive only once.
+    cands = [_cand("snare", [1, 0, 0], 0.9), _cand("clap", [1, 0.01, 0], 0.5), _cand("kick", [0, 1, 0], 0.8)]
+    kept = kits._dedupe(cands, 0.93, 8)
+    assert sorted(k["category"] for k in kept) == ["kick", "snare"]
+    assert next(k for k in kept if k["category"] == "snare")["count"] == 2
+
+
+def test_select_kit_round_robins_types():
+    recs = [_cand("kick", [1, i, 0], 0.9 - i / 10) for i in range(5)] + \
+           [_cand("snare", [0, 1, i], 0.8) for i in range(3)] + [_cand("hihat", [i, 0, 1], 0.7) for i in range(2)]
+    kit = kits.select_kit(recs, 6)
+    assert [r["category"] for r in kit] == ["kick", "snare", "hihat", "kick", "snare", "hihat"]
+    assert kit[0]["score"] == 0.9  # best kick first
+
+
+def test_layout_pads_mpc_rows():
+    samples = [{"id": f"k{i}", "category": "kick"} for i in range(5)] + \
+              [{"id": "s1", "category": "snare"}, {"id": "h1", "category": "hihat"}, {"id": "p1", "category": "perc"}]
+    pads = kits.layout_pads(samples)
+    assert len(pads) == 64
+    assert pads[0:4] == ["k0", "k1", "k2", "k3"]  # bottom row: kicks
+    assert pads[4] == "s1" and pads[8] == "h1" and pads[12] == "p1"
+    assert "k4" in pads[:16]  # overflow kick still lands in bank A

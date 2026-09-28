@@ -68,7 +68,15 @@ export const api = {
 
   buildKit: (
     pid: string,
-    body: { track: string; mode: string; sensitivity: number; similarity: number; max_per_category: number },
+    body: {
+      track: string
+      mode: string
+      sensitivity: number
+      similarity: number
+      max_per_category: number
+      kit_size?: number
+      load_pads?: boolean
+    },
   ) => req<Job>('POST', `${P(pid)}/kits`, body),
 
   createSample: (pid: string, body: { track: string; start: number; end: number; category?: string }) =>
@@ -78,9 +86,12 @@ export const api = {
   analyzeSample: (pid: string, sid: string, keepCategory = false) =>
     req<Sample>('POST', `${P(pid)}/samples/${sid}/analyze?keep_category=${keepCategory}`),
   deleteSample: (pid: string, sid: string) => req('DELETE', `${P(pid)}/samples/${sid}`),
+  deleteSamples: (pid: string, ids: string[]) =>
+    req<{ deleted: number }>('POST', `${P(pid)}/samples/delete`, { ids }),
   sampleAudioUrl: (pid: string, s: Sample) => `${P(pid)}/samples/${s.id}/audio?v=${s.start}-${s.end}`,
   samplePeaks: (pid: string, s: Sample, n = 160) =>
     req<{ duration: number; peaks: number[] }>('GET', `${P(pid)}/samples/${s.id}/peaks?n=${n}&v=${s.start}-${s.end}`),
-  exportKit: (pid: string, body: { sample_ids?: string[]; kit_name: string; normalize: boolean }) =>
+  savePads: (pid: string, pads: (string | null)[]) => req<{ pads: (string | null)[] }>('PUT', `${P(pid)}/pads`, { pads }),
+  exportKit: (pid: string, body: { sample_ids?: string[]; kit_name: string; normalize: boolean; from_pads?: boolean }) =>
     req<ExportResult>('POST', `${P(pid)}/samples/export`, body),
 }
