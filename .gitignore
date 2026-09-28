@@ -1,0 +1,14 @@
+# Python
+.venv/
+__pycache__/
+*.egg-info/
+.pytest_cache/
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+
+# Chopper projects, stems, samples, exports and downloaded models
+data/
+
+.DS_Store

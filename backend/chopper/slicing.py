@@ -1,0 +1,135 @@
+"""Peak (onset) detection and slice export."""
+
+from __future__ import annotations
+
+import time
+import zipfile
+from pathlib import Path
+
+import librosa
+import numpy as np
+
+from . import audio
+from .store import new_id, safe_name
+
+HOP = 256
+
+
+def detect_onsets(
+    y: np.ndarray,
+    sr: int,
+    sensitivity: float = 0.5,
+    min_gap: float = 0.08,
+    gate_db: float = -40.0,
+) -> np.ndarray:
+    """Onset times (seconds), backtracked to the preceding energy minimum.
+
+    sensitivity: 0..1, higher finds more (quieter / less distinct) hits.
+    min_gap:     minimum seconds between two onsets.
+    gate_db:     ignore hits quieter than this relative to the loudest moment.
+    """
+    if y.size < HOP * 4:
+        return np.zeros(0)
+    sensitivity = float(np.clip(sensitivity, 0.0, 1.0))
+    # Leading silence so a hit at t=0 still produces a rising edge.
+    pad = HOP * 16
+    y = np.concatenate([np.zeros(pad, dtype=y.dtype), y])
+    # max_size>1 (SuperFlux) suppresses false onsets from pitch sweeps / vibrato.
+    env = librosa.onset.onset_strength(y=y, sr=sr, hop_length=HOP, max_size=3)
+    frame_s = HOP / sr
+    frames = librosa.onset.onset_detect(
+        onset_envelope=env,
+        sr=sr,
+        hop_length=HOP,
+        backtrack=False,
+        delta=0.01 + (1.0 - sensitivity) ** 2 * 0.35,
+        wait=max(1, int(min_gap / frame_s)),
+        pre_max=max(1, int(0.03 / frame_s)),
+        post_max=max(1, int(0.03 / frame_s)),
+        pre_avg=max(1, int(0.1 / frame_s)),
+        post_avg=max(1, int(0.1 / frame_s)),
+    )
+    if frames.size == 0:
+        return np.zeros(0)
+
+    rms = librosa.feature.rms(y=y, frame_length=HOP * 4, hop_length=HOP)[0]
+    ref = rms.max() + 1e-12
+    look = max(1, int(0.05 / frame_s))
+    after = np.array([rms[f:f + look].max() if f < len(rms) else 0.0 for f in frames])
+    # Gate: loudness just after the onset relative to the loudest moment.
+    loud = 20 * np.log10(after / ref + 1e-12) >= gate_db
+    # A real hit raises the energy in at least one frequency band; a decaying tail
+    # with spectral movement (e.g. a kick's pitch sweep) doesn't. Per-band so a hat
+    # over a ringing kick still counts.
+    rise = _band_rise_db(y, sr, frames, look)
+    rising = rise >= 3.0 + (1.0 - sensitivity) * 6.0
+    frames = frames[loud & rising]
+    if frames.size == 0:
+        return np.zeros(0)
+
+    frames = librosa.onset.onset_backtrack(frames, rms)
+    times = librosa.frames_to_time(frames, sr=sr, hop_length=HOP) - pad / sr
+    return np.unique(np.clip(times, 0.0, None))
+
+
+def _band_rise_db(y: np.ndarray, sr: int, frames: np.ndarray, look: int, n_bands: int = 4) -> np.ndarray:
+    """Largest energy increase (dB) across frequency bands around each onset frame."""
+    mel = librosa.feature.melspectrogram(y=y, sr=sr, n_fft=HOP * 4, hop_length=HOP, n_mels=16 * n_bands)
+    bands = mel.reshape(n_bands, 16, -1).sum(axis=1)
+    db = 10 * np.log10(bands + bands.max() * 1e-10)
+    out = np.zeros(len(frames))
+    for i, f in enumerate(frames):
+        pre = db[:, max(0, f - 2 * look):max(1, f - 2)]
+        post = db[:, f:f + look]
+        if post.shape[1]:
+            out[i] = float(np.max(post.max(axis=1) - pre.min(axis=1)))
+    return out
+
+
+def slices_from_onsets(
+    onsets: np.ndarray,
+    duration: float,
+    max_len: float | None = None,
+    min_len: float = 0.03,
+) -> list[dict]:
+    """Each slice runs from its onset to the next one (or max_len / end of track)."""
+    out = []
+    for i, start in enumerate(onsets):
+        end = onsets[i + 1] if i + 1 < len(onsets) else duration
+        if max_len:
+            end = min(end, start + max_len)
+        if end - start >= min_len:
+            out.append({"id": new_id(), "start": round(float(start), 4), "end": round(float(end), 4)})
+    return out
+
+
+def export_slices(
+    project_dir: Path,
+    tracks: list[dict],
+    slices: list[dict],
+    fade_in_ms: float = 2.0,
+    fade_out_ms: float = 8.0,
+    norm: bool = False,
+) -> Path:
+    """Cut every slice out of every selected track into one zip, one folder per track."""
+    if not slices:
+        raise ValueError("no slices to export")
+    if not tracks:
+        raise ValueError("no tracks selected")
+    ordered = sorted(slices, key=lambda s: s["start"])
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    zip_path = project_dir / "exports" / f"slices-{stamp}-{new_id()[:4]}.zip"
+    zip_path.parent.mkdir(parents=True, exist_ok=True)
+    width = max(3, len(str(len(ordered))))
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        for track in tracks:
+            src = project_dir / track["file"]
+            y_full, sr = audio.read(src)
+            label = safe_name(track["name"])
+            for i, s in enumerate(ordered, 1):
+                a, b = int(s["start"] * sr), int(s["end"] * sr)
+                seg = audio.apply_fades(y_full[:, a:b], sr, fade_in_ms, fade_out_ms)
+                if norm:
+                    seg = audio.normalize(seg)
+                zf.writestr(f"{label}/{label}_{i:0{width}d}.wav", audio.wav_bytes24(seg, sr))
+    return zip_path
