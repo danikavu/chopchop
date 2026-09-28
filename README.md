@@ -15,19 +15,29 @@ sliders, and set the category and key of each sample before exporting a kit.
 
 ## Setup
 
-Requirements: Python 3.10+, Node 18+, and **ffmpeg** (needed for stem separation):
+Requirements: Python 3.10+, Node 18+, and **ffmpeg** (needed for stem separation).
+
+The same commands work on macOS, Linux and Windows:
 
 ```sh
-brew install ffmpeg      # macOS
-make install             # .venv with the Python engine + audio-separator/PyTorch, and npm deps
-make run                 # builds the UI and opens http://127.0.0.1:8765
+python scripts/run.py install   # .venv with the Python engine + audio-separator/PyTorch, and npm deps
+python scripts/run.py run       # builds the UI and opens http://127.0.0.1:8765
 ```
+
+To install ffmpeg:
+
+- macOS: `brew install ffmpeg`
+- Windows: `winget install Gyan.FFmpeg`, then open a new terminal.
+- Linux: your package manager, e.g. `sudo apt install ffmpeg`.
+
+On Windows, use `py scripts\run.py …` if `python` isn't on your PATH. On macOS and Linux,
+`make install` / `make run` are shortcuts for the same commands.
 
 The first separation with each model downloads it into `data/models/`. Projects are stored
 in `data/projects/`. Set `CHOPPER_DATA=/some/path` to keep them somewhere else.
 
-If you don't need separation, `pip install -e .` installs a much lighter engine without
-PyTorch. You can then import stems you already have (e.g. from the UVR GUI) with
+If you don't need separation, `python scripts/run.py install --no-separation` installs a much
+lighter engine without PyTorch. You can then import stems you already have (e.g. from the UVR GUI) with
 **Import stems…**.
 
 ## Using it
@@ -95,8 +105,8 @@ Everything is heuristic DSP (librosa/numpy), with no training data.
 ## Development
 
 ```sh
-make dev    # API with auto-reload on :8765 + Vite hot reload on http://localhost:5173
-make test   # pytest (synthetic drums/tones with known answers) + TypeScript typecheck
+python scripts/run.py dev    # API with auto-reload on :8765 + Vite hot reload on http://localhost:5173
+python scripts/run.py test   # pytest (synthetic drums/tones with known answers) + TypeScript typecheck
 ```
 
 - `backend/chopper/`

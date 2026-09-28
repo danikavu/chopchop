@@ -133,10 +133,12 @@ def create_app(store: Store | None = None) -> FastAPI:
 
     async def save_upload(file: UploadFile) -> Path:
         suffix = Path(file.filename or "audio").suffix or ".wav"
-        tmp = Path(tempfile.mkstemp(suffix=suffix)[1])
-        with tmp.open("wb") as fh:
+        fd, name = tempfile.mkstemp(suffix=suffix)
+        # Write through mkstemp's own handle so it gets closed; a leaked handle makes
+        # the later unlink fail on Windows (files can't be deleted while open).
+        with open(fd, "wb") as fh:
             shutil.copyfileobj(file.file, fh)
-        return tmp
+        return Path(name)
 
     # ---------- meta ----------
 
