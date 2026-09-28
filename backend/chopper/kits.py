@@ -37,31 +37,6 @@ def trim_tail(seg: np.ndarray, sr: int, floor_db: float = -45.0, pre: np.ndarray
     return int(min(seg.size, (above[-1] + 2) * hop + int(0.005 * sr)))
 
 
-def snap_to_transient(y: np.ndarray, sr: int, a: int, b: int) -> int:
-    """Move a hit's start to the rising edge right before its peak, minus 1 ms.
-
-    Onsets come quantised to analysis frames; snapping makes identical hits line up
-    (for de-duplication) and makes the exported one-shots start right at the attack.
-    """
-    # Fine-grained log-spectral flux: reacts to *new* energy, so it still finds the
-    # attack when an earlier sound (kick tail, bass) is ringing louder underneath.
-    lo = a - int(0.02 * sr)
-    win = y[max(0, lo):min(b, a + int(0.06 * sr))]
-    if lo < 0:  # hit at the very start of the file: pretend there was silence before
-        win = np.concatenate([np.zeros(-lo, dtype=win.dtype), win])
-    n_fft, hop = 256, 32
-    if win.size < n_fft * 2:
-        return a
-    S = np.abs(librosa.stft(win, n_fft=n_fft, hop_length=hop, center=False))
-    L = np.log1p(S * 1000)
-    flux = np.maximum(np.diff(L, axis=1), 0).sum(axis=0)
-    f = int(np.argmax(flux)) + 1
-    # New energy enters at the window's leading edge; take the frame centre and a
-    # 2 ms margin so the attack is never clipped.
-    onset = lo + f * hop + n_fft // 2
-    return max(0, onset - int(0.002 * sr))
-
-
 def _quality(y: np.ndarray, sr: int, a: int, b: int, ref_peak: float) -> float:
     """0..1: loud, isolated from what came before, and not cut off by the next hit."""
     seg = y[a:b]
@@ -175,7 +150,6 @@ def extract(
         if i % 10 == 0:
             progress(0.1 + 0.6 * i / len(regions), f"Analysing hit {i + 1}/{len(regions)}…")
         if mode != "phrases":
-            a = snap_to_transient(y, sr, a, b)
             b = a + trim_tail(y[a:b], sr, pre=y[max(0, a - int(0.04 * sr)):a])
         if b - a < min_len * sr:
             continue

@@ -22,7 +22,7 @@ def detect_onsets(
     min_gap: float = 0.08,
     gate_db: float = -40.0,
 ) -> np.ndarray:
-    """Onset times (seconds), backtracked to the preceding energy minimum.
+    """Onset times (seconds), placed just before each hit's attack.
 
     sensitivity: 0..1, higher finds more (quieter / less distinct) hits.
     min_gap:     minimum seconds between two onsets.
@@ -67,9 +67,43 @@ def detect_onsets(
     if frames.size == 0:
         return np.zeros(0)
 
-    frames = librosa.onset.onset_backtrack(frames, rms)
-    times = librosa.frames_to_time(frames, sr=sr, hop_length=HOP) - pad / sr
+    # Snap each onset to its actual attack. (Backtracking to the previous energy
+    # minimum lands anywhere in a silent gap, leaving silence at the slice start.)
+    peaks = frames * HOP
+    starts = []
+    prev = 0
+    for s in peaks:
+        lo = max(prev, s - int(0.05 * sr))
+        start = snap_to_attack(y, sr, lo, s + int(0.03 * sr))
+        starts.append(start)
+        prev = start + int(0.01 * sr)
+    times = (np.array(starts) - pad) / sr
     return np.unique(np.clip(times, 0.0, None))
+
+
+def snap_to_attack(y: np.ndarray, sr: int, lo: int, hi: int, margin: float = 0.002) -> int:
+    """Sample index of the attack inside y[lo:hi], minus a small safety margin.
+
+    Uses fine-grained log-spectral flux, which reacts to *new* energy, so it finds the
+    attack even when an earlier sound (kick tail, bass) is ringing louder underneath.
+    lo may be negative (hit at the very start): treated as silence before the file.
+    """
+    win = y[max(0, lo):max(0, hi)]
+    if lo < 0:
+        win = np.concatenate([np.zeros(-lo, dtype=win.dtype), win])
+    n_fft, hop = 256, 32
+    if win.size < n_fft * 2:
+        return max(0, lo)
+    S = np.abs(librosa.stft(win, n_fft=n_fft, hop_length=hop, center=False))
+    # Floor 50 dB below the loudest bin: faint splatter (e.g. a fade-out) mustn't
+    # look like an attack just because it rises out of near-silence.
+    L = np.log(S + S.max() * 3e-3)
+    flux = np.maximum(np.diff(L, axis=1), 0).sum(axis=0)
+    f = int(np.argmax(flux)) + 1
+    # New energy enters at the window's leading edge; take the frame centre plus a
+    # small margin so the attack itself is never clipped.
+    onset = lo + f * hop + n_fft // 2
+    return max(0, onset - int(margin * sr))
 
 
 def _band_rise_db(y: np.ndarray, sr: int, frames: np.ndarray, look: int, n_bands: int = 4) -> np.ndarray:

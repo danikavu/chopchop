@@ -15,6 +15,20 @@ def test_detect_onsets_matches_loop():
     assert np.max(np.abs(onsets - np.array(truth))) < 0.02
 
 
+def test_onsets_start_at_attack_not_in_silence():
+    # Hits separated by long silent gaps: slices must start right at each attack
+    # (at most a few ms early), never back in the silence before it.
+    truth = [0.3, 1.1, 1.75, 2.9]
+    sigs = [synth.kick(), synth.snare(), synth.hat(), synth.kick()]
+    y = synth.place(list(zip(truth, sigs)), 3.6)
+    y += np.random.default_rng(0).standard_normal(y.size).astype(np.float32) * 1e-4  # noise floor
+    onsets = slicing.detect_onsets(y, SR)
+    assert len(onsets) == len(truth)
+    early = np.array(truth) - onsets
+    assert np.all(early >= 0), early  # attack never clipped
+    assert np.all(early < 0.006), early
+
+
 def test_sensitivity_and_gate():
     quiet_hat = synth.hat() * 0.02  # ~ -34 dB below the kick
     y = synth.place([(0.1, synth.kick()), (0.6, quiet_hat), (1.0, synth.kick())], 1.6)
