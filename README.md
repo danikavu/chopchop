@@ -42,10 +42,24 @@ PyTorch. You can then import stems you already have (e.g. from the UVR GUI) with
      <kbd>Del</kbd> delete · <kbd>←</kbd>/<kbd>→</kbd> step through and audition ·
      <kbd>Enter</kbd> save the selected slice as a sample.
    - **Export** writes a zip with one folder per selected track (`drums/drums_001.wav`, …).
-3. **Kits & bits** tab: **Build drum kit** on the drum stem, or **Extract sound bits**
+3. **Kits & bits** tab: **Build drum kit** on the drum stem (optionally loading it onto the
+   pads), or **Extract sound bits**
    (chops or phrases) from any stem. Running it again on the same track replaces the samples
    it made last time; samples you made by hand are kept.
-4. The **sample browser** groups samples by category. You can play, rename, recategorize and
+4. **Drum pads**, 4 banks × 16 pads laid out like an MPC:
+   - **Auto kit → pads** builds a kit from the drum stem and loads it onto bank A. Kicks go
+     on the bottom row (A01–A04), then snares and claps (A05–A08), hats (A09–A12), and
+     perc and toms on top (A13–A16).
+   - Each pad shows how often its sound occurs in the track (×24).
+   - Play pads by clicking, or with <kbd>M</kbd> <kbd>,</kbd> <kbd>.</kbd> <kbd>/</kbd> ·
+     <kbd>J</kbd> <kbd>K</kbd> <kbd>L</kbd> <kbd>;</kbd> · <kbd>U</kbd> <kbd>I</kbd>
+     <kbd>O</kbd> <kbd>P</kbd> · <kbd>7</kbd> <kbd>8</kbd> <kbd>9</kbd> <kbd>0</kbd>
+     (bottom row to top row).
+   - A closed hat chokes a ringing open hat.
+   - Load sounds by dragging a sample onto a pad, or by selecting a pad and pressing ⊞ on a
+     sample. Drag one pad onto another to swap them; right-click a pad to clear it.
+   - **Export pads** writes `A01_kick_01.wav`, `A05_snare_01.wav`, … in pad order.
+5. The **sample browser** groups samples by category. You can play, rename, recategorize and
    set the key of each sample, trim it (✂), or re-detect its key (♪). **Export kit** zips the
    samples currently shown as `kit/<category>/<name>_<key>.wav`.
 
@@ -62,10 +76,18 @@ Everything is heuristic DSP (librosa/numpy), with no training data.
   hit is then labelled from its band energies (sub, low, mid, high, air), noisiness, decay
   time and clap-style repeated bursts.
 - **Keeping the best unique hits.** Each hit gets a timbre fingerprint: its mel spectrum in
-  five time windows. Within a category, hits are ranked by quality (loud, isolated from what
-  came before, not cut off by the next hit). A hit is kept only if its similarity to every
-  hit already kept is below the **Uniqueness** threshold. The same drum sound re-triggered
-  scores about 0.97–1.0; two different kicks score about 0.8–0.88.
+  five time windows. The same drum sound re-triggered scores about 0.97–1.0; two different
+  kicks score about 0.8–0.88.
+  - Hits are visited from cleanest to messiest. Quality means loud, isolated from what came
+    before, and not cut off by the next hit.
+  - A hit joins the cluster of the most similar sound already kept when their similarity is
+    above the **Uniqueness** threshold; otherwise it starts a new cluster. Each cluster's
+    representative is therefore its best-sounding take, and the cluster size gives the
+    occurrence count.
+  - Near-identical sounds in different categories are merged, e.g. a snare that was once
+    misread as a clap.
+- **Auto kit.** Picks the kit round-robin across drum types (kick, snare, hat, clap, open
+  hat, perc, …), so a 16-pad kit gets variety before depth.
 - **Key.** One-shots under 1.5 s get a note from pYIN pitch tracking (e.g. `F#1`). Longer
   bits get a key from chroma matched against Krumhansl–Kessler profiles (e.g. `A min`).
   Relative major and minor keys can be confused on short phrases, so keys are editable.

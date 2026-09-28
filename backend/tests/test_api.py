@@ -1,4 +1,5 @@
 import io
+import json
 import time
 import zipfile
 
@@ -106,3 +107,41 @@ def test_bad_upload(client):
 def test_unknown_project(client):
     assert client.get("/api/projects/0123456789").status_code == 404
     assert client.get("/api/projects/../etc").status_code == 404
+
+
+def test_auto_kit_loads_pads(client):
+    y, _ = synth.drum_loop(bars=2)
+    pid = client.post("/api/projects", files={"file": ("loop.wav", wav(y), "audio/wav")}).json()["id"]
+    j = wait(client, client.post(f"/api/projects/{pid}/kits",
+                                 json={"track": "mix", "mode": "drums", "kit_size": 16, "load_pads": True}).json())
+    assert j["status"] == "done", j["error"]
+    p = client.get(f"/api/projects/{pid}").json()
+    cat = {s["id"]: s["category"] for s in p["samples"]}
+    assert len(p["pads"]) == 64
+    assert (cat[p["pads"][0]], cat[p["pads"][4]], cat[p["pads"][8]]) == ("kick", "snare", "hihat")
+
+    # Rearrange: move the kick to pad 2 and put the hat on it too
+    pads = p["pads"][:]
+    kick, hat = pads[0], pads[8]
+    pads[0], pads[1], pads[9] = None, kick, hat
+    assert client.put(f"/api/projects/{pid}/pads", json={"pads": pads}).status_code == 200
+    assert client.put(f"/api/projects/{pid}/pads", json={"pads": ["nope"] + [None] * 63}).status_code == 400
+
+    r = client.post(f"/api/projects/{pid}/samples/export", json={"kit_name": "Pads", "from_pads": True}).json()
+    names = sorted(zipfile.ZipFile(io.BytesIO(client.get(r["url"]).content)).namelist())
+    assert names[0].startswith("pads/A02_kick") and any(n.startswith("pads/A05_snare") for n in names)
+    assert len(names) == 3  # hat on two pads is exported once (as A09)
+
+    # Deleting a sample empties its pads
+    client.delete(f"/api/projects/{pid}/samples/{hat}")
+    assert hat not in client.get(f"/api/projects/{pid}").json()["pads"]
+
+
+def test_old_projects_get_pads(client, tmp_path):
+    y, _ = synth.drum_loop(bars=1)
+    pid = client.post("/api/projects", files={"file": ("loop.wav", wav(y), "audio/wav")}).json()["id"]
+    meta = tmp_path / "projects" / pid / "project.json"
+    data = json.loads(meta.read_text())
+    del data["pads"]
+    meta.write_text(json.dumps(data))
+    assert client.get(f"/api/projects/{pid}").json()["pads"] == [None] * 64

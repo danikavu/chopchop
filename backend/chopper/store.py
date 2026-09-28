@@ -29,6 +29,9 @@ def safe_name(name: str) -> str:
     return cleaned or "track"
 
 
+PAD_SLOTS = 64  # 4 banks x 16 pads
+
+
 class ProjectNotFound(KeyError):
     pass
 
@@ -64,6 +67,7 @@ class Store:
             "tracks": [],
             "slices": [],
             "samples": [],
+            "pads": [None] * PAD_SLOTS,
         }
         self._write(pid, project)
         return project
@@ -89,7 +93,11 @@ class Store:
         if not meta.exists():
             raise ProjectNotFound(pid)
         with self._lock(pid):
-            return json.loads(meta.read_text())
+            project = json.loads(meta.read_text())
+        # Projects created before drum pads existed.
+        pads = project.setdefault("pads", [])
+        pads.extend([None] * (PAD_SLOTS - len(pads)))
+        return project
 
     def _write(self, pid: str, project: dict) -> None:
         meta = self._meta(pid)

@@ -27,6 +27,7 @@ export interface Sample {
   key_confidence?: number
   pitch_hz?: number | null
   score?: number | null
+  occurrences?: number
   origin: 'drums' | 'chops' | 'phrases' | 'manual'
   created_at: number
 }
@@ -40,6 +41,7 @@ export interface Project {
   tracks: Track[]
   slices: Slice[]
   samples: Sample[]
+  pads: (string | null)[]
 }
 
 export interface ProjectSummary {

@@ -3,6 +3,7 @@ import type WaveSurfer from 'wavesurfer.js'
 import { api } from '../api'
 import type { Job, Meta, Project, Sample, Slice } from '../types'
 import { fmtTime, label, stopPreview, trackColor, useJob } from '../util'
+import { DrumPads } from './DrumPads'
 import { KitPanel } from './KitPanel'
 import { SampleBrowser } from './SampleBrowser'
 import { SampleEditor } from './SampleEditor'
@@ -36,6 +37,7 @@ export function ProjectView({ pid, meta, onBack }: Props) {
   const [scrollLeft, setScrollLeft] = useState(0)
   const [tab, setTab] = useState<'slice' | 'kit'>('slice')
   const [editing, setEditing] = useState<Sample | null>(null)
+  const [selectedPad, setSelectedPad] = useState<number | null>(null)
   const [sepJobId, setSepJobId] = useState<string | null>(null)
   const [model, setModel] = useState(() => meta.models.find((m) => m.default)?.id ?? meta.models[0]?.id ?? '')
 
@@ -283,6 +285,31 @@ export function ProjectView({ pid, meta, onBack }: Props) {
     return () => window.removeEventListener('keydown', onKey)
   })
 
+  // ---------- pads ----------
+
+  const setPads = (pads: (string | null)[]) => {
+    setProject((p) => (p ? { ...p, pads } : p))
+    api.savePads(pid, pads).catch((e) => {
+      setError(`Saving pads failed: ${e.message}`)
+      void reload()
+    })
+  }
+
+  /** MPC-style: load onto the selected pad (replacing it), else the first free pad. */
+  const loadToPad = (sid: string) => {
+    if (!project) return
+    const pads = [...project.pads]
+    const target = selectedPad ?? pads.findIndex((x) => !x)
+    if (target < 0) {
+      setError('All pads are full — select a pad to replace')
+      return
+    }
+    pads[target] = sid
+    setPads(pads)
+    // Step to the next pad so a run of samples can be loaded in a row.
+    setSelectedPad(Math.min(target + 1, pads.length - 1))
+  }
+
   // ---------- stems ----------
 
   const separate = async () => {
@@ -416,15 +443,40 @@ export function ProjectView({ pid, meta, onBack }: Props) {
             {playheadX >= HEAD_W && <div className="playhead" style={{ left: playheadX }} />}
           </div>
 
+          <DrumPads
+            pid={pid}
+            pads={project.pads}
+            samples={project.samples}
+            tracks={tracks}
+            projectName={project.name}
+            selectedPad={selectedPad}
+            onSelectPad={setSelectedPad}
+            onPadsChange={setPads}
+            onKitBuilt={async () => {
+              await reload()
+              flash('Auto kit loaded onto the pads')
+            }}
+          />
+
           <SampleBrowser
             pid={pid}
+            pads={project.pads}
+            onLoadToPad={loadToPad}
             projectName={project.name}
             samples={project.samples}
             meta={meta}
             onChange={(s) => setProject((p) => (p ? { ...p, samples: p.samples.map((x) => (x.id === s.id ? s : x)) } : p))}
             onDelete={async (sid) => {
               await api.deleteSample(pid, sid)
-              setProject((p) => (p ? { ...p, samples: p.samples.filter((x) => x.id !== sid) } : p))
+              setProject((p) =>
+                p
+                  ? {
+                      ...p,
+                      samples: p.samples.filter((x) => x.id !== sid),
+                      pads: p.pads.map((x) => (x === sid ? null : x)),
+                    }
+                  : p,
+              )
             }}
             onEdit={setEditing}
           />

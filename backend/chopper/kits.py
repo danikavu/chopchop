@@ -86,19 +86,60 @@ def similarity(a: np.ndarray, b: np.ndarray) -> float:
     return float(np.clip(a @ b, 0.0, 1.0))
 
 
+def _priority(c: dict) -> float:
+    """Best-sounding first, with a nudge towards sounds the track uses a lot."""
+    return c["score"] * (1 + 0.15 * np.log(c["count"]))
+
+
 def _dedupe(cands: list[dict], max_similarity: float, max_per: int) -> list[dict]:
-    """Per category, keep highest-scoring hits that aren't too similar to ones already kept."""
+    """Cluster near-identical hits and keep one representative per cluster.
+
+    Hits are visited best-first, so each cluster's representative is its cleanest
+    hit; every other hit joins the most similar representative (``count`` = how many
+    times that sound occurs). Representatives that are near-identical across
+    categories (a snare once misread as a clap) are merged too. Finally each category
+    keeps its ``max_per`` highest-priority sounds.
+    """
+    reps: list[dict] = []
+    for c in sorted(cands, key=lambda c: c["score"], reverse=True):
+        same = [r for r in reps if r["category"] == c["category"]]
+        sims = [similarity(c["emb"], r["emb"]) for r in same]
+        if sims and max(sims) >= max_similarity:
+            same[int(np.argmax(sims))]["count"] += 1
+        else:
+            reps.append({**c, "count": 1})
+
+    merged: list[dict] = []
+    for r in sorted(reps, key=_priority, reverse=True):
+        twin = next((m for m in merged if similarity(r["emb"], m["emb"]) >= max_similarity), None)
+        if twin:
+            twin["count"] += r["count"]
+        else:
+            merged.append(r)
+
     kept: list[dict] = []
-    for cat in dict.fromkeys(c["category"] for c in cands):
-        group = sorted((c for c in cands if c["category"] == cat), key=lambda c: c["score"], reverse=True)
-        chosen: list[dict] = []
-        for c in group:
-            if len(chosen) >= max_per:
-                break
-            if all(similarity(c["emb"], k["emb"]) < max_similarity for k in chosen):
-                chosen.append(c)
-        kept.extend(chosen)
+    for cat in dict.fromkeys(r["category"] for r in merged):
+        group = sorted((r for r in merged if r["category"] == cat), key=_priority, reverse=True)
+        kept.extend(group[:max_per])
     return kept
+
+
+# Order drum types are drawn in when a kit has to be trimmed to a size.
+KIT_ORDER = ["kick", "snare", "hihat", "clap", "open_hat", "perc", "tom", "cymbal"]
+
+
+def select_kit(recs: list[dict], size: int) -> list[dict]:
+    """Pick ``size`` sounds: round-robin across drum types (kick, snare, hat, …), each
+    type contributing its highest-priority sounds first, so a 16-pad kit gets variety
+    before depth."""
+    order = KIT_ORDER + sorted({r["category"] for r in recs} - set(KIT_ORDER))
+    queues = {cat: sorted((r for r in recs if r["category"] == cat), key=_priority, reverse=True) for cat in order}
+    out: list[dict] = []
+    while len(out) < size and any(queues.values()):
+        for cat in order:
+            if queues[cat] and len(out) < size:
+                out.append(queues[cat].pop(0))
+    return out
 
 
 def extract(
@@ -110,6 +151,7 @@ def extract(
     max_per_category: int = 8,
     max_len: float | None = None,
     min_len: float | None = None,
+    kit_size: int | None = None,
     progress: Progress = _noop,
 ) -> list[dict]:
     """Build sample records (not yet saved) from a track.
@@ -117,6 +159,7 @@ def extract(
     mode: 'drums'   -> classify each hit as kick/snare/hat/…
           'chops'   -> short onset-based bits labelled by the stem type
           'phrases' -> longer silence-separated bits labelled by the stem type
+    kit_size: if set, trim the result to this many sounds with ``select_kit``.
     """
     src = project_dir / track["file"]
     progress(0.02, "Loading audio…")
@@ -169,6 +212,8 @@ def extract(
 
     progress(0.72, f"Picking best unique sounds from {len(cands)} candidates…")
     kept = _dedupe(cands, similarity, max_per_category)
+    if kit_size:
+        kept = select_kit(kept, kit_size)
 
     out = []
     for i, c in enumerate(kept):
@@ -184,12 +229,46 @@ def extract(
             "category": c["category"],
             "category_confidence": round(c["category_confidence"], 3),
             "score": round(c["score"], 3),
+            "occurrences": c["count"],
             "origin": mode,
             **tonal,
             "features": {k: round(v, 4) for k, v in f.items() if isinstance(v, float)},
         })
+    if kit_size:
+        return out  # keep select_kit's order: it decides pad placement priority
     return sorted(out, key=lambda s: (analysis.CATEGORIES.index(s["category"])
                                       if s["category"] in analysis.CATEGORIES else 99, -s["score"]))
+
+
+PADS_PER_BANK = 16
+BANKS = 4
+# MPC layout: pad 1 is bottom-left. Rows (bottom to top) and the drum types they host.
+PAD_ROWS = [["kick"], ["snare", "clap"], ["hihat", "open_hat", "cymbal"], ["perc", "tom"]]
+
+
+def empty_pads() -> list[str | None]:
+    return [None] * (PADS_PER_BANK * BANKS)
+
+
+def layout_pads(samples: list[dict]) -> list[str | None]:
+    """Place samples on pads MPC-style: kicks on the bottom row (pads 1-4), snares and
+    claps on 5-8, hats on 9-12, perc/toms on 13-16. Overflow fills free pads in bank A,
+    then continues into banks B, C, D."""
+    pads = empty_pads()
+    overflow: list[dict] = []
+    placed = {cat: row for row, cats in enumerate(PAD_ROWS) for cat in cats}
+    fill = [0] * len(PAD_ROWS)
+    for s in samples:
+        row = placed.get(s["category"])
+        if row is not None and fill[row] < 4:
+            pads[row * 4 + fill[row]] = s["id"]
+            fill[row] += 1
+        else:
+            overflow.append(s)
+    free = [i for i, p in enumerate(pads) if p is None]
+    for s, i in zip(overflow, free):
+        pads[i] = s["id"]
+    return pads
 
 
 def next_name(existing: list[dict], category: str) -> str:
@@ -241,8 +320,24 @@ def analyse_region(project_dir: Path, track: dict, start: float, end: float, cat
     }
 
 
-def export_kit(project_dir: Path, project: dict, samples: list[dict], kit_name: str, norm: bool = False) -> Path:
-    """Zip samples into <kit>/<category>/<name>[_<key>].wav."""
+def pad_label(index: int) -> str:
+    """0 -> 'A01', 17 -> 'B02' (MPC bank + pad number)."""
+    return f"{'ABCD'[index // PADS_PER_BANK]}{index % PADS_PER_BANK + 1:02d}"
+
+
+def export_kit(
+    project_dir: Path,
+    project: dict,
+    samples: list[dict],
+    kit_name: str,
+    norm: bool = False,
+    pad_labels: dict[str, str] | None = None,
+) -> Path:
+    """Zip samples into <kit>/<category>/<name>[_<key>].wav.
+
+    pad_labels: {sample id: 'A01'} exports a pad kit instead: a flat folder of
+    <kit>/A01_<name>[_<key>].wav, in pad order.
+    """
     if not samples:
         raise ValueError("no samples to export")
     kit = safe_name(kit_name) or "kit"
@@ -254,7 +349,10 @@ def export_kit(project_dir: Path, project: dict, samples: list[dict], kit_name: 
             if norm:
                 y = audio.normalize(y)
             key = f"_{s['key'].replace(' ', '')}" if s.get("key") else ""
-            base = f"{kit}/{safe_name(s['category'])}/{safe_name(s['name'])}{key}"
+            if pad_labels:
+                base = f"{kit}/{pad_labels[s['id']]}_{safe_name(s['name'])}{key}"
+            else:
+                base = f"{kit}/{safe_name(s['category'])}/{safe_name(s['name'])}{key}"
             path, n = f"{base}.wav", 2
             while path in used:
                 path, n = f"{base}_{n}.wav", n + 1

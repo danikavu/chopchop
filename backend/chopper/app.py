@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 
 from . import analysis, audio, kits, separation, slicing
 from .jobs import Job, JobRunner
-from .store import ProjectNotFound, Store, find_sample, find_track, new_id, safe_name
+from .store import PAD_SLOTS, ProjectNotFound, Store, find_sample, find_track, new_id, safe_name
 
 FRONTEND_DIST = Path(__file__).resolve().parents[2] / "frontend" / "dist"
 
@@ -57,7 +57,13 @@ class KitReq(BaseModel):
     sensitivity: float = Field(0.5, ge=0, le=1)
     similarity: float = Field(0.93, ge=0.3, le=1)
     max_per_category: int = Field(8, ge=1, le=200)
+    kit_size: int | None = Field(None, ge=1, le=64)  # auto kit: best N unique sounds
+    load_pads: bool = False  # lay the result out on the drum pads
     replace: bool = True
+
+
+class PadsReq(BaseModel):
+    pads: list[str | None]
 
 
 class SampleCreateReq(BaseModel):
@@ -81,6 +87,7 @@ class ExportKitReq(BaseModel):
     sample_ids: list[str] | None = None
     kit_name: str = "kit"
     normalize: bool = False
+    from_pads: bool = False  # export what's on the pads, named A01_…, B02_…
 
 
 def create_app(store: Store | None = None) -> FastAPI:
@@ -316,16 +323,20 @@ def create_app(store: Store | None = None) -> FastAPI:
 
         def work(job: Job):
             recs = kits.extract(folder, t, req.mode, req.sensitivity, req.similarity,
-                                req.max_per_category, progress=job.update)
+                                req.max_per_category, kit_size=req.kit_size, progress=job.update)
             job.update(0.96, f"Saving {len(recs)} samples…")
             with store.edit(pid) as proj:
                 if req.replace:
                     old = [s for s in proj["samples"] if s.get("track") == t["name"] and s.get("origin") == req.mode]
                     for s in old:
                         (folder / s["file"]).unlink(missing_ok=True)
-                    proj["samples"] = [s for s in proj["samples"] if s not in old]
-                saved = [kits.save_sample(folder, proj, t, r)["id"] for r in recs]
-            return {"samples": saved}
+                    gone = {s["id"] for s in old}
+                    proj["samples"] = [s for s in proj["samples"] if s["id"] not in gone]
+                    proj["pads"] = [None if p in gone else p for p in proj["pads"]]
+                saved = [kits.save_sample(folder, proj, t, r) for r in recs]
+                if req.load_pads:
+                    proj["pads"] = kits.layout_pads(saved)
+            return {"samples": [s["id"] for s in saved], "pads_loaded": req.load_pads}
 
         return asdict(jobs.submit(f"kit:{req.mode}", pid, work))
 
@@ -382,11 +393,24 @@ def create_app(store: Store | None = None) -> FastAPI:
             s.update(rec)
             return s
 
+    @app.put("/api/projects/{pid}/pads")
+    def put_pads(pid: str, req: PadsReq):
+        if len(req.pads) != PAD_SLOTS:
+            raise HTTPException(400, f"expected {PAD_SLOTS} pads")
+        with store.edit(pid) as p:
+            ids = {s["id"] for s in p["samples"]}
+            unknown = [x for x in req.pads if x is not None and x not in ids]
+            if unknown:
+                raise HTTPException(400, f"unknown samples: {unknown}")
+            p["pads"] = list(req.pads)
+            return {"pads": p["pads"]}
+
     @app.delete("/api/projects/{pid}/samples/{sid}")
     def delete_sample(pid: str, sid: str):
         with store.edit(pid) as p:
             s = sample_or_404(p, sid)
             p["samples"].remove(s)
+            p["pads"] = [None if x == sid else x for x in p["pads"]]
         (store.path(pid) / s["file"]).unlink(missing_ok=True)
         return {"ok": True}
 
@@ -404,11 +428,21 @@ def create_app(store: Store | None = None) -> FastAPI:
     def export_kit(pid: str, req: ExportKitReq):
         p = get_project(pid)
         samples = p["samples"]
-        if req.sample_ids is not None:
+        labels = None
+        if req.from_pads:
+            by_id = {s["id"]: s for s in samples}
+            on_pads = [(i, by_id[x]) for i, x in enumerate(p["pads"]) if x in by_id]
+            samples = [s for _, s in on_pads]
+            # A sample on several pads is exported once, under its first pad.
+            labels = {}
+            for i, s in on_pads:
+                labels.setdefault(s["id"], kits.pad_label(i))
+            samples = list({s["id"]: s for s in samples}.values())
+        elif req.sample_ids is not None:
             wanted = set(req.sample_ids)
             samples = [s for s in samples if s["id"] in wanted]
         try:
-            path = kits.export_kit(store.path(pid), p, samples, req.kit_name or p["name"], req.normalize)
+            path = kits.export_kit(store.path(pid), p, samples, req.kit_name or p["name"], req.normalize, labels)
         except ValueError as e:
             raise HTTPException(400, str(e))
         return {

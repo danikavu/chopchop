@@ -30,6 +30,7 @@ export function KitPanel({ pid, tracks, onDone }: Props) {
   const [drumSens, setDrumSens] = useState(0.5)
   const [drumSim, setDrumSim] = useState(0.93)
   const [drumMax, setDrumMax] = useState(6)
+  const [toPads, setToPads] = useState(true)
   const [bitSens, setBitSens] = useState(0.5)
   const [bitSim, setBitSim] = useState(0.9)
   const [bitMax, setBitMax] = useState(16)
@@ -47,11 +48,11 @@ export function KitPanel({ pid, tracks, onDone }: Props) {
     }
   })
 
-  const run = async (track: string, m: string, sensitivity: number, similarity: number, max: number) => {
+  const run = async (track: string, m: string, sensitivity: number, similarity: number, max: number, loadPads = false) => {
     setError(null)
     setLast(null)
     try {
-      const j = await api.buildKit(pid, { track, mode: m, sensitivity, similarity, max_per_category: max })
+      const j = await api.buildKit(pid, { track, mode: m, sensitivity, similarity, max_per_category: max, load_pads: loadPads })
       setJobId(j.id)
     } catch (e) {
       setError((e as Error).message)
@@ -87,8 +88,12 @@ export function KitPanel({ pid, tracks, onDone }: Props) {
           format={(v) => `${Math.round(v * 100)}%`}
           hint="Hits more similar than this to a kept one are treated as duplicates. Lower = fewer, more different sounds." />
         <Slider label="Max per type" value={drumMax} min={1} max={32} step={1} onChange={setDrumMax} />
+        <label className="check" style={{ marginBottom: 10 }}>
+          <input type="checkbox" checked={toPads} onChange={(e) => setToPads(e.target.checked)} />
+          Load onto drum pads
+        </label>
         <button className="primary wide" disabled={busy || !drumTrack}
-          onClick={() => run(drumTrack, 'drums', drumSens, drumSim, drumMax)}>
+          onClick={() => run(drumTrack, 'drums', drumSens, drumSim, drumMax, toPads)}>
           Build drum kit
         </button>
       </section>
