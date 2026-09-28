@@ -14,10 +14,11 @@ interface Props {
   meta: Meta
   onChange: (s: Sample) => void
   onDelete: (sid: string) => void
+  onDeleteMany: (ids: string[]) => Promise<void>
   onEdit: (s: Sample) => void
 }
 
-export function SampleBrowser({ pid, pads, onLoadToPad, projectName, samples, meta, onChange, onDelete, onEdit }: Props) {
+export function SampleBrowser({ pid, pads, onLoadToPad, projectName, samples, meta, onChange, onDelete, onDeleteMany, onEdit }: Props) {
   const padLabels = useMemo(() => {
     const m = new Map<string, string[]>()
     pads.forEach((sid, i) => {
@@ -88,6 +89,19 @@ export function SampleBrowser({ pid, pads, onLoadToPad, projectName, samples, me
           </select>
         )}
         <div className="spacer" />
+        <button
+          disabled={busy || !shown.length}
+          title="Delete every sample currently shown (respects the category / track filter)"
+          onClick={async () => {
+            const what = shown.length === samples.length ? 'ALL samples' : `the ${shown.length} samples shown`
+            if (!window.confirm(`Delete ${what}? This also clears them from the drum pads.`)) return
+            await onDeleteMany(shown.map((s) => s.id))
+            setFilter(null)
+            setTrackFilter(null)
+          }}
+        >
+          {shown.length === samples.length ? 'Delete all' : `Delete shown (${shown.length})`}
+        </button>
         <input className="kit-name" value={kitName} onChange={(e) => setKitName(e.target.value)} placeholder="kit name" />
         <label className="check">
           <input type="checkbox" checked={normalize} onChange={(e) => setNormalize(e.target.checked)} /> normalize

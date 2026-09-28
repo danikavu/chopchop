@@ -86,6 +86,8 @@ export const api = {
   analyzeSample: (pid: string, sid: string, keepCategory = false) =>
     req<Sample>('POST', `${P(pid)}/samples/${sid}/analyze?keep_category=${keepCategory}`),
   deleteSample: (pid: string, sid: string) => req('DELETE', `${P(pid)}/samples/${sid}`),
+  deleteSamples: (pid: string, ids: string[]) =>
+    req<{ deleted: number }>('POST', `${P(pid)}/samples/delete`, { ids }),
   sampleAudioUrl: (pid: string, s: Sample) => `${P(pid)}/samples/${s.id}/audio?v=${s.start}-${s.end}`,
   samplePeaks: (pid: string, s: Sample, n = 160) =>
     req<{ duration: number; peaks: number[] }>('GET', `${P(pid)}/samples/${s.id}/peaks?n=${n}&v=${s.start}-${s.end}`),

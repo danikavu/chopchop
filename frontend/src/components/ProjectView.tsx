@@ -478,6 +478,25 @@ export function ProjectView({ pid, meta, onBack }: Props) {
                   : p,
               )
             }}
+            onDeleteMany={async (ids) => {
+              const gone = new Set(ids)
+              try {
+                await api.deleteSamples(pid, ids)
+              } catch (e) {
+                setError((e as Error).message)
+                return
+              }
+              setProject((p) =>
+                p
+                  ? {
+                      ...p,
+                      samples: p.samples.filter((x) => !gone.has(x.id)),
+                      pads: p.pads.map((x) => (x && gone.has(x) ? null : x)),
+                    }
+                  : p,
+              )
+              flash(`Deleted ${ids.length} sample${ids.length === 1 ? '' : 's'}`)
+            }}
             onEdit={setEditing}
           />
         </div>

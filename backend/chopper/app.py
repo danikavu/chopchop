@@ -83,6 +83,10 @@ class SampleUpdateReq(BaseModel):
     clear_key: bool = False
 
 
+class DeleteSamplesReq(BaseModel):
+    ids: list[str]
+
+
 class ExportKitReq(BaseModel):
     sample_ids: list[str] | None = None
     kit_name: str = "kit"
@@ -413,6 +417,18 @@ def create_app(store: Store | None = None) -> FastAPI:
             p["pads"] = [None if x == sid else x for x in p["pads"]]
         (store.path(pid) / s["file"]).unlink(missing_ok=True)
         return {"ok": True}
+
+    @app.post("/api/projects/{pid}/samples/delete")
+    def delete_samples(pid: str, req: DeleteSamplesReq):
+        """Bulk delete; also empties any pads the samples were on."""
+        ids = set(req.ids)
+        with store.edit(pid) as p:
+            gone = [s for s in p["samples"] if s["id"] in ids]
+            p["samples"] = [s for s in p["samples"] if s["id"] not in ids]
+            p["pads"] = [None if x in ids else x for x in p["pads"]]
+        for s in gone:
+            (store.path(pid) / s["file"]).unlink(missing_ok=True)
+        return {"deleted": len(gone)}
 
     @app.get("/api/projects/{pid}/samples/{sid}/audio")
     def sample_audio(pid: str, sid: str):

@@ -145,3 +145,17 @@ def test_old_projects_get_pads(client, tmp_path):
     del data["pads"]
     meta.write_text(json.dumps(data))
     assert client.get(f"/api/projects/{pid}").json()["pads"] == [None] * 64
+
+
+def test_bulk_delete_samples(client):
+    y, _ = synth.drum_loop(bars=2)
+    pid = client.post("/api/projects", files={"file": ("loop.wav", wav(y), "audio/wav")}).json()["id"]
+    wait(client, client.post(f"/api/projects/{pid}/kits", json={"track": "mix", "load_pads": True}).json())
+    p = client.get(f"/api/projects/{pid}").json()
+    ids = [s["id"] for s in p["samples"]]
+    assert len(ids) == 3 and any(p["pads"])
+    r = client.post(f"/api/projects/{pid}/samples/delete", json={"ids": ids[:2]})
+    assert r.json() == {"deleted": 2}
+    p = client.get(f"/api/projects/{pid}").json()
+    assert [s["id"] for s in p["samples"]] == ids[2:]
+    assert set(filter(None, p["pads"])) == {ids[2]}
