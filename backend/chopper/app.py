@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import mimetypes
 import shutil
 import tempfile
 from dataclasses import asdict
@@ -473,6 +474,11 @@ def create_app(store: Store | None = None) -> FastAPI:
     # ---------- frontend ----------
 
     if FRONTEND_DIST.exists():
+        # Python's mimetypes reads the Windows registry, where .js is often registered
+        # as text/plain; browsers refuse module scripts with that type (blank page).
+        for ext, mime in ((".js", "text/javascript"), (".mjs", "text/javascript"),
+                          (".css", "text/css"), (".svg", "image/svg+xml")):
+            mimetypes.add_type(mime, ext)
         app.mount("/", StaticFiles(directory=FRONTEND_DIST, html=True), name="frontend")
 
     return app
