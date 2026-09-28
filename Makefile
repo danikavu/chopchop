@@ -1,22 +1,20 @@
-PY := .venv/bin/python
+# Shortcuts for macOS/Linux. Everything lives in scripts/run.py, which also works on
+# Windows: `py scripts\run.py <command>`.
+RUN := python3 scripts/run.py
 
 .PHONY: install build run dev test
 
-install:  ## Python venv (with stem separation) + frontend deps
-	python3 -m venv .venv
-	$(PY) -m pip install -e ".[separation,dev]"
-	cd frontend && npm install
+install:  ## .venv with the Python engine (+ stem separation) and npm deps
+	$(RUN) install
 
-build:  ## Build the UI into frontend/dist (served by the Python server)
-	cd frontend && npm run build
+build:  ## Build the UI into frontend/dist
+	$(RUN) build
 
-run: build  ## Build the UI and start Chopper on http://127.0.0.1:8765
-	$(PY) -m chopper
+run:  ## Build the UI and start Chopper on http://127.0.0.1:8765
+	$(RUN) run
 
-dev:  ## API on :8765 + Vite dev server with hot reload on :5173
-	$(PY) -m uvicorn --factory chopper.app:create_app --port 8765 --reload --reload-dir backend & \
-	cd frontend && npm run dev
+dev:  ## API with auto-reload on :8765 + Vite hot reload on :5173
+	$(RUN) dev
 
 test:  ## Backend tests + frontend typecheck
-	$(PY) -m pytest -q
-	cd frontend && npm run typecheck
+	$(RUN) test
