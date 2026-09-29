@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import functools
 import importlib.util
 import platform
@@ -78,8 +79,7 @@ def device_info() -> dict:
     if torch.cuda.is_available():
         return {"device": "cuda", "name": torch.cuda.get_device_name(0), "hint": None}
     if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
-        return {"device": "mps", "name": "Apple GPU (Metal)",
-                "hint": "Demucs models run on CPU here: PyTorch's Metal backend can't run them yet."}
+        return {"device": "mps", "name": "Apple GPU (Metal)", "hint": None}
     if _has("torch_directml"):
         import torch_directml
         if torch_directml.is_available():
@@ -190,6 +190,12 @@ class _ProgressCapture:
         return False
 
 
+def _mps_long_conv():
+    from .mps_compat import mps_long_conv  # imports torch; only needed on Apple GPUs
+
+    return mps_long_conv()
+
+
 def _device_label(sep) -> str:
     dev = sep.torch_device
     kind = getattr(dev, "type", str(dev))
@@ -232,12 +238,14 @@ def separate(src: Path, out_dir: Path, model: str, on_progress: Progress | None 
             use_soundfile=True,  # write WAVs directly instead of through pydub/ffmpeg
             use_directml=_has("torch_directml"),  # AMD/Intel GPUs on Windows, if installed
         )
-        # Demucs hits "Output channels > 65536 not supported at the MPS device" on
-        # Apple Silicon; CUDA and DirectML are fine.
-        if force_cpu or (is_demucs and getattr(sep.torch_device, "type", "") == "mps"):
+        if force_cpu:
             sep.torch_device = sep.torch_device_cpu
         device = _device_label(sep)
-        with _ProgressCapture(emit, device) as cap:
+        on_mps = getattr(sep.torch_device, "type", "") == "mps"
+        # Demucs' long convolutions exceed an MPS size limit; mps_long_conv computes
+        # them in chunks (identical results, ~6x faster than CPU on an M-series Mac).
+        gpu_fix = _mps_long_conv() if on_mps else contextlib.nullcontext()
+        with gpu_fix, _ProgressCapture(emit, device) as cap:
             sep.load_model(model_filename=model)
             cap.emit(SEPARATE[0], f"Model loaded · separating on {device}…")
             if is_demucs:

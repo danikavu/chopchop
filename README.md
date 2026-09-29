@@ -36,8 +36,8 @@ automatically:
 - **NVIDIA (Windows / Linux):** it detects the GPU with `nvidia-smi` and installs a CUDA
   build of PyTorch that your driver supports. The default PyTorch download on Windows is
   CPU-only.
-- **Apple Silicon:** uses the Metal GPU. Demucs models still run on CPU, because PyTorch's
-  Metal backend can't run them.
+- **Apple Silicon:** uses the Metal GPU for every model, Demucs included (about 6× faster
+  than CPU).
 - **AMD / Intel on Windows:** `install --gpu directml` (experimental).
 - **Force CPU:** `install --gpu cpu`.
 
@@ -200,7 +200,11 @@ python scripts/run.py test   # pytest (synthetic drums/tones with known answers)
 
 Notes:
 
-- On Apple Silicon, Demucs models run on CPU (PyTorch's MPS backend can't run their
-  convolutions). Other models try the GPU first and fall back to CPU.
+- On Apple Silicon, Demucs runs on the GPU through a small shim
+  (`backend/chopper/mps_compat.py`). PyTorch's Metal backend rejects 1-D convolutions
+  longer than 65536 steps, and Demucs convolves whole ~7.8 s segments, so the shim computes
+  those convolutions in chunks. The results are identical: Metal-vs-CPU output differs
+  exactly as much as two CPU runs do, because of Demucs' random shifts. If a model still
+  fails on the GPU, separation retries on CPU automatically.
 - Stems from the separator use the model's sample rate (44.1 kHz). All slice and sample
   positions are stored in seconds, so tracks with different sample rates still line up.
