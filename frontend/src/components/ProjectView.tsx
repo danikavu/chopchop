@@ -4,6 +4,7 @@ import { api } from '../api'
 import type { Job, Meta, Project, Sample, Slice } from '../types'
 import { fmtTime, label, stopPreview, trackColor, useJob } from '../util'
 import { DrumPads } from './DrumPads'
+import { JobProgress, SEPARATION_STEPS } from './JobProgress'
 import { KitPanel } from './KitPanel'
 import { SampleBrowser } from './SampleBrowser'
 import { SampleEditor } from './SampleEditor'
@@ -377,7 +378,11 @@ export function ProjectView({ pid, meta, onBack }: Props) {
         <div className="banner">
           <div>
             <strong>Separate this track into stems</strong>
-            <div className="muted">Runs UVR models locally (first run downloads the model).</div>
+            <div className="muted">
+              Runs UVR models locally (first run downloads the model)
+              {meta.device && <> · runs on <b className={`device ${meta.device.device}`}>{meta.device.name}</b></>}
+            </div>
+            {meta.device?.hint && <div className="warn small">{meta.device.hint}</div>}
           </div>
           {meta.separation.available ? (
             <>
@@ -397,11 +402,7 @@ export function ProjectView({ pid, meta, onBack }: Props) {
       )}
       {sepJobId && (
         <div className="banner">
-          <div className="progress grow">
-            <div className={`bar ${sepJob && sepJob.progress < 0.9 && sepJob.progress >= 0.2 ? 'indeterminate' : ''}`}
-              style={{ width: `${Math.round((sepJob?.progress ?? 0) * 100)}%` }} />
-            <span>{sepJob?.message || 'Starting separation…'}</span>
-          </div>
+          <JobProgress job={sepJob} steps={SEPARATION_STEPS} fallback="Starting separation…" />
         </div>
       )}
 

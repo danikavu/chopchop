@@ -26,6 +26,8 @@ class Job:
     result: Any = None
     error: str | None = None
     created_at: float = field(default_factory=time.time)
+    started_at: float | None = None
+    finished_at: float | None = None
 
     def update(self, progress: float | None = None, message: str | None = None) -> None:
         if progress is not None:
@@ -47,6 +49,7 @@ class JobRunner:
 
         def run():
             job.status = "running"
+            job.started_at = time.time()
             try:
                 job.result = fn(job)
                 job.progress = 1.0
@@ -55,6 +58,8 @@ class JobRunner:
                 log.error("job %s failed:\n%s", job.id, traceback.format_exc())
                 job.error = str(exc) or exc.__class__.__name__
                 job.status = "error"
+            finally:
+                job.finished_at = time.time()
 
         self._pool.submit(run)
         return job

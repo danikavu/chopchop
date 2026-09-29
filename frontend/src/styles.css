@@ -224,3 +224,18 @@ input[type='checkbox'] { accent-color: var(--accent); margin: 0; }
 .pads-side h3 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin-bottom: 6px; }
 .card[draggable='true'] { cursor: grab; }
 .card-pads { position: absolute; left: 4px; top: 2px; font: 10px ui-monospace, monospace; color: var(--accent); }
+
+/* ---------- job progress ---------- */
+.job { flex: 1; min-width: 0; margin-top: 10px; }
+.banner .job { margin-top: 0; }
+.job .progress { margin-top: 0; }
+.job-steps { display: flex; flex-wrap: wrap; gap: 4px 14px; list-style: none; padding: 0; margin: 0 0 8px; font-size: 12px; color: var(--muted); }
+.job-steps li::before { content: '○'; margin-right: 5px; }
+.job-steps li.done { color: var(--ok); }
+.job-steps li.done::before { content: '✓'; }
+.job-steps li.now { color: var(--text); font-weight: 600; }
+.job-steps li.now::before { content: '●'; color: var(--accent); animation: pulse 1.4s ease-in-out infinite; }
+.job-meta { display: flex; gap: 12px; margin-top: 4px; font: 11px ui-monospace, monospace; color: var(--muted); }
+.warn.small { font-size: 12px; margin-top: 4px; }
+.device.cuda, .device.mps, .device.directml { color: var(--ok); }
+.device.cpu { color: #fbbf24; }

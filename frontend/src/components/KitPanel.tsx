@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { api } from '../api'
 import type { Job, Track } from '../types'
 import { label, useJob } from '../util'
+import { JobProgress } from './JobProgress'
 import { Slider } from './Slider'
 
 interface Props {
@@ -120,12 +121,7 @@ export function KitPanel({ pid, tracks, onDone }: Props) {
         </button>
       </section>
 
-      {job && busy && (
-        <div className="progress">
-          <div className="bar" style={{ width: `${Math.round(job.progress * 100)}%` }} />
-          <span>{job.message || 'Working…'}</span>
-        </div>
-      )}
+      {busy && <JobProgress job={job} fallback="Working…" />}
       {last && <div className="result">{last} — see the sample browser below.</div>}
       {error && <div className="error">{error}</div>}
       <p className="tip">Re-running on the same track replaces the samples it made last time (manual ones are kept).</p>

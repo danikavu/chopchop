@@ -30,6 +30,21 @@ To install ffmpeg:
 - Windows: `winget install Gyan.FFmpeg`, then open a new terminal.
 - Linux: your package manager, e.g. `sudo apt install ffmpeg`.
 
+**GPU acceleration for stem separation.** `install` picks the right PyTorch build
+automatically:
+
+- **NVIDIA (Windows / Linux):** it detects the GPU with `nvidia-smi` and installs a CUDA
+  build of PyTorch that your driver supports. The default PyTorch download on Windows is
+  CPU-only.
+- **Apple Silicon:** uses the Metal GPU. Demucs models still run on CPU, because PyTorch's
+  Metal backend can't run them.
+- **AMD / Intel on Windows:** `install --gpu directml` (experimental).
+- **Force CPU:** `install --gpu cpu`.
+
+The install ends by printing the device separation will use, and the app shows it on the
+**Separate stems** banner. If you installed before GPU support existed, just run
+`install` again.
+
 On Windows, use `py scripts\run.py …` if `python` isn't on your PATH. On macOS and Linux,
 `make install` / `make run` are shortcuts for the same commands.
 

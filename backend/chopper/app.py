@@ -151,6 +151,7 @@ def create_app(store: Store | None = None) -> FastAPI:
             "keys": analysis.KEYS,
             "notes": analysis.NOTE_NAMES,
             "separation": separation.status(),
+            "device": separation.device_info() if separation.status()["available"] else None,
             "models": separation.MODELS,
         }
 
@@ -253,8 +254,10 @@ def create_app(store: Store | None = None) -> FastAPI:
             out = folder / "separation" / new_id()
             try:
                 stems = separation.separate(folder / mix["file"], out, req.model, job.update)
-                job.update(0.9, "Importing stems…")
-                added = [add_track(pid, name, "stem", path)["name"] for name, path in stems.items()]
+                added = []
+                for i, (name, path) in enumerate(stems.items()):
+                    job.update(0.9 + 0.1 * i / len(stems), f"Importing stem {i + 1}/{len(stems)}: {name}")
+                    added.append(add_track(pid, name, "stem", path)["name"])
             finally:
                 shutil.rmtree(out, ignore_errors=True)
             return {"tracks": added}

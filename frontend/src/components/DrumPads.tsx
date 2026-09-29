@@ -3,6 +3,7 @@ import { api } from '../api'
 import { chokeGroupFor, preload, trigger } from '../padEngine'
 import type { ExportResult, Job, Sample, Track } from '../types'
 import { categoryColor, label, useJob } from '../util'
+import { JobProgress } from './JobProgress'
 
 export const PADS_PER_BANK = 16
 const BANKS = ['A', 'B', 'C', 'D']
@@ -271,12 +272,7 @@ export function DrumPads(p: Props) {
           <button className="primary wide" onClick={autoKit} disabled={busy || !drumTrack}>
             {busy ? 'Building…' : 'Auto kit → pads'}
           </button>
-          {job && busy && (
-            <div className="progress">
-              <div className="bar" style={{ width: `${Math.round(job.progress * 100)}%` }} />
-              <span>{job.message || 'Working…'}</span>
-            </div>
-          )}
+          {busy && <JobProgress job={job} fallback="Working…" />}
           <p className="tip">
             Click or press <kbd>M</kbd> <kbd>,</kbd> <kbd>.</kbd> <kbd>/</kbd> · <kbd>J</kbd>–<kbd>;</kbd> ·{' '}
             <kbd>U</kbd>–<kbd>P</kbd> · <kbd>7</kbd>–<kbd>0</kbd> to play. Drag samples from below onto a pad, drag pads to

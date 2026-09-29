@@ -61,6 +61,8 @@ export interface Job {
   message: string
   result: unknown
   error: string | null
+  started_at: number | null
+  finished_at: number | null
 }
 
 export interface Model {
@@ -76,6 +78,7 @@ export interface Meta {
   keys: string[]
   notes: string[]
   separation: { available: boolean; reason: string | null }
+  device: { device: 'cuda' | 'mps' | 'directml' | 'cpu'; name: string; hint: string | null } | null
   models: Model[]
 }
 
