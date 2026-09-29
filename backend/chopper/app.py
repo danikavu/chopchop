@@ -55,6 +55,9 @@ class ExportSlicesReq(BaseModel):
 
 class SeparateReq(BaseModel):
     model: str = "htdemucs_6s.yaml"
+    stems: list[str] | None = None  # which stems to keep; None = all the model makes
+    rest: bool = True  # mix the stems not kept into one extra track (e.g. "instrumental")
+    replace: bool = True  # remove the project's current stems first
 
 
 class KitReq(BaseModel):
@@ -300,13 +303,33 @@ def create_app(store: Store | None = None) -> FastAPI:
             raise HTTPException(400, st["reason"])
         mix = next(t for t in p["tracks"] if t["kind"] == "mix")
         folder = store.path(pid)
+        model = next((m for m in separation.MODELS if m["id"] == req.model), None)
+        if model is None:
+            raise HTTPException(400, f"unknown model: {req.model}")
+        keep = [x for x in model["stems"] if req.stems is None or x in req.stems]
+        unknown = set(req.stems or []) - set(model["stems"])
+        if unknown:
+            raise HTTPException(400, f"{model['label']} doesn't make: {', '.join(sorted(unknown))}")
+        if not keep:
+            raise HTTPException(400, "pick at least one stem")
 
         def work(job: Job):
             out = folder / "separation" / new_id()
             try:
                 stems = separation.separate(folder / mix["file"], out, req.model, job.update)
+                if set(keep) < set(stems):
+                    dropped = [n for n in stems if n not in keep]
+                    job.update(0.89, f"Mixing {', '.join(dropped)} into {separation.rest_name(keep)}…"
+                               if req.rest else f"Keeping {', '.join(keep)}…")
+                stems = separation.combine(stems, keep, req.rest, out)
+                # Lanes in the model's usual order (vocals, drums, bass, …), remainder last.
+                order = model["stems"]
+                stems = dict(sorted(stems.items(), key=lambda kv: order.index(kv[0]) if kv[0] in order else 99))
                 added = []
                 with store.undo_group(pid, "Separate stems"):
+                    if req.replace:
+                        with store.edit(pid) as proj:
+                            proj["tracks"] = [t for t in proj["tracks"] if t["kind"] != "stem"]
                     for i, (name, path) in enumerate(stems.items()):
                         job.update(0.9 + 0.1 * i / len(stems), f"Importing stem {i + 1}/{len(stems)}: {name}")
                         added.append(add_track(pid, name, "stem", path)["name"])

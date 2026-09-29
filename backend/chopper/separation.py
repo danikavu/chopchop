@@ -11,6 +11,8 @@ import threading
 from pathlib import Path
 from typing import Callable
 
+import numpy as np
+
 from .store import data_dir
 
 MODELS = [
@@ -264,3 +266,41 @@ def separate(src: Path, out_dir: Path, model: str, on_progress: Progress | None 
     if not stems:
         raise RuntimeError("separation produced no stems")
     return stems
+
+
+def rest_name(keep: list[str]) -> str:
+    """Name for the track the unselected stems are mixed into."""
+    if keep == ["vocals"]:
+        return "instrumental"
+    if len(keep) == 1:
+        return f"no_{keep[0]}"
+    return "rest"
+
+
+def combine(stems: dict[str, Path], keep: list[str] | None, rest: bool, out_dir: Path) -> dict[str, Path]:
+    """Keep the chosen stems; optionally mix the others into one extra track.
+
+    The remainder is the sum of the separated stems that weren't chosen (not the mix
+    minus the chosen ones), so it carries no leftovers of the kept parts' artifacts.
+    """
+    if not keep or set(keep) >= set(stems):
+        return stems
+    unknown = set(keep) - set(stems)
+    if unknown:
+        raise ValueError(f"the model didn't produce: {', '.join(sorted(unknown))}")
+    chosen = {name: path for name, path in stems.items() if name in keep}
+    others = [path for name, path in stems.items() if name not in keep]
+    if rest and others:
+        from . import audio  # local import: keeps this module light for status checks
+
+        parts = [audio.read(p) for p in others]
+        sr = parts[0][1]
+        channels = max(y.shape[0] for y, _ in parts)
+        length = max(y.shape[1] for y, _ in parts)
+        total = np.zeros((channels, length), dtype=np.float32)
+        for y, _ in parts:
+            total[:, : y.shape[1]] += y if y.shape[0] == channels else np.repeat(y, channels, axis=0)
+        path = out_dir / f"{rest_name(keep)}.wav"
+        audio.write_wav(path, total, sr)
+        chosen[rest_name(keep)] = path
+    return chosen

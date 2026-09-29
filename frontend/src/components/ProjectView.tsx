@@ -7,6 +7,7 @@ import { DrumPads } from './DrumPads'
 import { JobProgress, SEPARATION_STEPS } from './JobProgress'
 import { KitPanel } from './KitPanel'
 import { SampleBrowser } from './SampleBrowser'
+import { type SeparateOptions, StemPicker } from './StemPicker'
 import { TempoControl } from './TempoControl'
 import { SampleEditor } from './SampleEditor'
 import { SlicePanel } from './SlicePanel'
@@ -60,7 +61,7 @@ export function ProjectView({ pid, meta, onBack }: Props) {
     return { ...s, start, end }
   }
   const [sepJobId, setSepJobId] = useState<string | null>(null)
-  const [model, setModel] = useState(() => meta.models.find((m) => m.default)?.id ?? meta.models[0]?.id ?? '')
+  const [showSeparate, setShowSeparate] = useState(false)
 
   const lanes = useRef(new Map<string, WaveSurfer>())
   const lanesBox = useRef<HTMLDivElement>(null)
@@ -204,9 +205,10 @@ export function ProjectView({ pid, meta, onBack }: Props) {
       reload().then((p) => {
         const stems = p.tracks.filter((t) => t.kind === 'stem').map((t) => t.name)
         setExportTracks(stems)
-        const drums = stems.find((n) => n.includes('drum'))
+        const drums = stems.find((n) => isDrumTrack(n))
         if (drums) setFocus(drums)
-        flash(`Separated into ${stems.length} stems`)
+        else if (!p.tracks.some((t) => t.name === focusedRef.current)) setFocus('mix') // lane was replaced
+        flash(`Separated into ${stems.length} stems: ${stems.join(', ')}`)
       })
   })
 
@@ -395,10 +397,12 @@ export function ProjectView({ pid, meta, onBack }: Props) {
 
   // ---------- stems ----------
 
-  const separate = async () => {
+  const separate = async (opts: SeparateOptions) => {
     setError(null)
     try {
-      const j = await api.separate(pid, model)
+      await flushSlices()
+      const j = await api.separate(pid, opts)
+      setShowSeparate(false)
       setSepJobId(j.id)
     } catch (e) {
       setError((e as Error).message)
@@ -468,13 +472,18 @@ export function ProjectView({ pid, meta, onBack }: Props) {
             void importStems(e.target.files)
             e.target.value = ''
           }} />
+        {hasStems && meta.separation.available && !sepJobId && (
+          <button onClick={() => setShowSeparate((v) => !v)} title="Re-separate with another model or stem choice">
+            Separate…
+          </button>
+        )}
         <button onClick={() => fileInput.current?.click()}>Import stems…</button>
       </header>
 
-      {!hasStems && !sepJobId && (
-        <div className="banner">
-          <div>
-            <strong>Separate this track into stems</strong>
+      {(!hasStems || showSeparate) && !sepJobId && (
+        <div className="banner separate-banner">
+          <div className="separate-intro">
+            <strong>{hasStems ? 'Separate again' : 'Separate this track into stems'}</strong>
             <div className="muted">
               Runs UVR models locally (first run downloads the model)
               {meta.device && <> · runs on <b className={`device ${meta.device.device}`}>{meta.device.name}</b></>}
@@ -482,16 +491,8 @@ export function ProjectView({ pid, meta, onBack }: Props) {
             {meta.device?.hint && <div className="warn small">{meta.device.hint}</div>}
           </div>
           {meta.separation.available ? (
-            <>
-              <select value={model} onChange={(e) => setModel(e.target.value)}>
-                {meta.models.map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.label} — {m.stems.join(', ')}
-                  </option>
-                ))}
-              </select>
-              <button className="primary" onClick={separate}>Separate stems</button>
-            </>
+            <StemPicker meta={meta} hasStems={hasStems} onStart={separate}
+              onCancel={hasStems ? () => setShowSeparate(false) : undefined} />
           ) : (
             <div className="warn">Separation unavailable: {meta.separation.reason}. You can still import stems.</div>
           )}

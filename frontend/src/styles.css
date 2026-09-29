@@ -269,3 +269,13 @@ input[type='checkbox'] { accent-color: var(--accent); margin: 0; }
 .alts button { padding: 3px 8px; }
 .nudge { gap: 6px; } .nudge button { padding: 2px 8px; }
 .undo-btns { display: flex; gap: 4px; } .undo-btns button { padding: 4px 9px; font-size: 14px; }
+
+/* ---------- stem picker ---------- */
+.separate-banner { align-items: flex-start; flex-wrap: wrap; }
+.separate-intro { flex: 0 1 320px; }
+.stem-picker { flex: 1 1 480px; display: flex; flex-direction: column; gap: 8px; }
+.stem-picker .field { margin: 0; justify-content: flex-start; }
+.stem-picker .field select { max-width: 420px; }
+.stem-picker .chips { margin: 0; }
+.stem-picker .presets { gap: 6px; }
+.stem-picker .tip { margin: 0; }

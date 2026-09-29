@@ -57,8 +57,15 @@ lighter engine without PyTorch. You can then import stems you already have (e.g.
 
 ## Using it
 
-1. Drop a track on the home page. Pick a model and click **Separate stems**. Demucs 6-stem
-   gives vocals, drums, bass, guitar, piano and other.
+1. Drop a track on the home page. Pick a model and which stems you want, then click
+   **Separate stems**.
+   - **All stems** is the default; Demucs 6-stem gives vocals, drums, bass, guitar,
+     piano and other.
+   - **Presets:** **Vocals + instrumental** and **Drums + rest**, or tick any combination.
+   - **The stems you leave out** can be mixed into one extra track: `instrumental` when
+     only vocals are kept, `no_drums` when only drums are, `rest` otherwise. Or drop them.
+   - **Separate…** in the top bar re-runs it later with another model or choice. It
+     replaces the current stems, and one undo brings them back.
 2. **Slice** tab: choose a track, tune sensitivity, gap and gate, then click **Detect**.
    Slices appear on every lane, so you can listen to the same chop across all stems.
    - Drag on a waveform to draw a slice; drag its edges or body to adjust it.

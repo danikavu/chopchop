@@ -74,7 +74,8 @@ export const api = {
   trackPeaks: (pid: string, name: string, n = 8000) =>
     req<{ duration: number; peaks: number[] }>('GET', `${P(pid)}/tracks/${enc(name)}/peaks?n=${n}`),
 
-  separate: (pid: string, model: string) => req<Job>('POST', `${P(pid)}/separate`, { model }),
+  separate: (pid: string, body: { model: string; stems: string[] | null; rest: boolean; replace: boolean }) =>
+    req<Job>('POST', `${P(pid)}/separate`, body),
   job: (jid: string) => req<Job>('GET', `/api/jobs/${jid}`),
   projectJobs: (pid: string) => req<Job[]>('GET', `${P(pid)}/jobs`),
 
