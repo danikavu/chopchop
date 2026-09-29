@@ -1,4 +1,4 @@
-import type { ExportResult, Job, Meta, Project, ProjectSummary, Sample, Slice, Track } from './types'
+import type { ExportResult, Job, Meta, Project, ProjectSummary, Sample, Slice, Tempo, Track } from './types'
 
 async function req<T>(method: string, url: string, body?: unknown): Promise<T> {
   const init: RequestInit = { method }
@@ -63,8 +63,16 @@ export const api = {
   saveSlices: (pid: string, slices: Slice[]) => req<{ slices: Slice[] }>('PUT', `${P(pid)}/slices`, { slices }),
   exportSlices: (
     pid: string,
-    body: { tracks: string[]; slice_ids?: string[]; fade_in_ms: number; fade_out_ms: number; normalize: boolean },
-  ) => req<ExportResult>('POST', `${P(pid)}/slices/export`, body),
+    body: {
+      tracks: string[]
+      slice_ids?: string[]
+      fade_in_ms: number
+      fade_out_ms: number
+      normalize: boolean
+      key_names: boolean
+      bpm_names: boolean
+    },
+  ) => req<Job>('POST', `${P(pid)}/slices/export`, body),
 
   buildKit: (
     pid: string,
@@ -91,6 +99,8 @@ export const api = {
   sampleAudioUrl: (pid: string, s: Sample) => `${P(pid)}/samples/${s.id}/audio?v=${s.start}-${s.end}`,
   samplePeaks: (pid: string, s: Sample, n = 160) =>
     req<{ duration: number; peaks: number[] }>('GET', `${P(pid)}/samples/${s.id}/peaks?n=${n}&v=${s.start}-${s.end}`),
+  detectTempo: (pid: string, track?: string) => req<Tempo>('POST', `${P(pid)}/tempo`, { track }),
+  setTempo: (pid: string, body: { bpm?: number; downbeat?: number }) => req<Tempo>('PUT', `${P(pid)}/tempo`, body),
   savePads: (pid: string, pads: (string | null)[]) => req<{ pads: (string | null)[] }>('PUT', `${P(pid)}/pads`, { pads }),
   exportKit: (pid: string, body: { sample_ids?: string[]; kit_name: string; normalize: boolean; from_pads?: boolean }) =>
     req<ExportResult>('POST', `${P(pid)}/samples/export`, body),

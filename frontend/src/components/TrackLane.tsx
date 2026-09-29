@@ -32,6 +32,8 @@ interface Props extends LaneEvents {
   exportChecked: boolean
   timeline: boolean
   showScrollbar: boolean
+  beats?: number[]
+  downbeat?: number
 }
 
 export function TrackLane(props: Props) {
@@ -97,6 +99,7 @@ export function TrackLane(props: Props) {
         })
         regions.on('region-updated', (r) => cb.current.onSliceChange({ id: r.id, start: r.start, end: r.end }))
         regions.on('region-clicked', (r, e) => {
+          if (r.id.startsWith('beat-')) return // beat-grid markers aren't slices
           e.stopPropagation()
           cb.current.onFocus(track.name)
           cb.current.onSelectSlice(r.id)
@@ -149,8 +152,21 @@ export function TrackLane(props: Props) {
         minLength: 0.005,
       })
     }
+    // Beat grid: thin non-interactive markers, brighter on bar lines.
+    const down = props.downbeat ?? 0
+    props.beats?.forEach((b, i) => {
+      const bar = i >= down && (i - down) % 4 === 0
+      regions.addRegion({
+        id: `beat-${i}`,
+        start: b,
+        color: bar ? 'rgba(245, 158, 11, 0.75)' : 'rgba(255, 255, 255, 0.22)',
+        drag: false,
+        resize: false,
+      })
+    })
     syncing.current = false
-  }, [slices, selectedId, ready, color, focused])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [slices, selectedId, ready, color, focused, props.beats, props.downbeat])
 
   return (
     <div className={`lane ${focused ? 'focused' : ''}`}>

@@ -13,7 +13,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import analysis, audio, kits, separation, slicing
+from . import analysis, audio, kits, separation, slicing, tempo
 from .jobs import Job, JobRunner
 from .store import PAD_SLOTS, ProjectNotFound, Store, find_sample, find_track, new_id, safe_name
 
@@ -46,6 +46,8 @@ class ExportSlicesReq(BaseModel):
     fade_in_ms: float = Field(2, ge=0, le=500)
     fade_out_ms: float = Field(8, ge=0, le=2000)
     normalize: bool = False
+    key_names: bool = True  # detect each slice's key/note and put it in the file name
+    bpm_names: bool = True  # tag slices ≥ ~1 beat with the project tempo
 
 
 class SeparateReq(BaseModel):
@@ -86,6 +88,15 @@ class SampleUpdateReq(BaseModel):
 
 class DeleteSamplesReq(BaseModel):
     ids: list[str]
+
+
+class TempoDetectReq(BaseModel):
+    track: str | None = None  # default: the drum stem, else the mix
+
+
+class TempoSetReq(BaseModel):
+    bpm: float | None = Field(None, gt=20, lt=400)
+    downbeat: int | None = Field(None, ge=0, le=3)  # which beat starts the bar
 
 
 class ExportKitReq(BaseModel):
@@ -260,9 +271,46 @@ def create_app(store: Store | None = None) -> FastAPI:
                     added.append(add_track(pid, name, "stem", path)["name"])
             finally:
                 shutil.rmtree(out, ignore_errors=True)
+            if any(analysis.is_drum_track(n) for n in added):
+                job.update(0.99, "Estimating tempo from the drums…")
+                detect_tempo(pid, None)
             return {"tracks": added}
 
         return asdict(jobs.submit("separate", pid, work))
+
+    # ---------- tempo ----------
+
+    def detect_tempo(pid: str, track_name: str | None) -> dict:
+        p = get_project(pid)
+        if track_name:
+            t = track_or_404(p, track_name)
+        else:
+            t = next((x for x in p["tracks"] if analysis.is_drum_track(x["name"])), None) or \
+                next(x for x in p["tracks"] if x["kind"] == "mix")
+        y, sr = audio.read_mono(store.path(pid) / t["file"], sr=None)
+        result = {**tempo.estimate(y, sr), "track": t["name"], "source": "detected"}
+        result["detected_bpm"] = result["bpm"]
+        with store.edit(pid) as proj:
+            proj["tempo"] = result
+        return result
+
+    @app.post("/api/projects/{pid}/tempo")
+    def post_tempo(pid: str, req: TempoDetectReq):
+        return detect_tempo(pid, req.track)
+
+    @app.put("/api/projects/{pid}/tempo")
+    def put_tempo(pid: str, req: TempoSetReq):
+        """Set the tempo by hand (typed, tapped, x2 / ÷2, or an alternative)."""
+        with store.edit(pid) as p:
+            base = p.get("tempo") or {"bpm": req.bpm, "beats": [], "alternatives": [], "range": None}
+            if req.bpm is not None:
+                base = tempo.rescale(base, req.bpm)
+            if req.downbeat is not None:
+                base = {**base, "downbeat": req.downbeat}
+            if base.get("bpm") is None:
+                raise HTTPException(400, "set a bpm first")
+            p["tempo"] = base
+            return p["tempo"]
 
     @app.get("/api/jobs/{jid}")
     def job(jid: str):
@@ -303,16 +351,23 @@ def create_app(store: Store | None = None) -> FastAPI:
         if req.slice_ids is not None:
             wanted = set(req.slice_ids)
             slices = [s for s in slices if s["id"] in wanted]
-        try:
-            path = slicing.export_slices(store.path(pid), tracks, slices, req.fade_in_ms, req.fade_out_ms, req.normalize)
-        except ValueError as e:
-            raise HTTPException(400, str(e))
-        return {
-            "file": path.name,
-            "path": str(path),
-            "url": f"/api/projects/{pid}/exports/{path.name}",
-            "count": len(slices) * len(tracks),
-        }
+        if not slices:
+            raise HTTPException(400, "no slices to export")
+        if not tracks:
+            raise HTTPException(400, "no tracks selected")
+        bpm = (p.get("tempo") or {}).get("bpm") if req.bpm_names else None
+
+        def work(job: Job):
+            path = slicing.export_slices(store.path(pid), tracks, slices, req.fade_in_ms, req.fade_out_ms,
+                                         req.normalize, bpm=bpm, keys=req.key_names, progress=job.update)
+            return {
+                "file": path.name,
+                "path": str(path),
+                "url": f"/api/projects/{pid}/exports/{path.name}",
+                "count": len(slices) * len(tracks),
+            }
+
+        return asdict(jobs.submit("export:slices", pid, work))
 
     @app.get("/api/projects/{pid}/exports/{fname}")
     def download_export(pid: str, fname: str):
@@ -464,7 +519,8 @@ def create_app(store: Store | None = None) -> FastAPI:
             wanted = set(req.sample_ids)
             samples = [s for s in samples if s["id"] in wanted]
         try:
-            path = kits.export_kit(store.path(pid), p, samples, req.kit_name or p["name"], req.normalize, labels)
+            bpm = (p.get("tempo") or {}).get("bpm")
+            path = kits.export_kit(store.path(pid), p, samples, req.kit_name or p["name"], req.normalize, labels, bpm)
         except ValueError as e:
             raise HTTPException(400, str(e))
         return {

@@ -32,6 +32,21 @@ export interface Sample {
   created_at: number
 }
 
+export interface Tempo {
+  bpm: number | null
+  confidence: number
+  components: Partial<Record<'clarity' | 'stability' | 'on_grid' | 'timing' | 'octave', number>>
+  range: [number, number] | null
+  steady: boolean | null
+  alternatives: { bpm: number; relation: string; strength: number }[]
+  beats: number[]
+  downbeat?: number
+  swing: { percent: number | null; grid: '8th' | '16th' | null }
+  track?: string
+  source?: 'detected' | 'manual'
+  detected_bpm?: number | null
+}
+
 export interface Project {
   id: string
   name: string
@@ -42,6 +57,7 @@ export interface Project {
   slices: Slice[]
   samples: Sample[]
   pads: (string | null)[]
+  tempo: Tempo | null
 }
 
 export interface ProjectSummary {

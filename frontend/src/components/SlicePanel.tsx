@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import { api } from '../api'
-import type { ExportResult, Slice, Track } from '../types'
-import { label } from '../util'
+import type { ExportResult, Job, Slice, Tempo, Track } from '../types'
+import { GRID_STEPS, label, snapTo, useJob } from '../util'
+import { JobProgress } from './JobProgress'
 import { Slider } from './Slider'
 
 interface Props {
@@ -15,7 +16,17 @@ interface Props {
   onSlices: (slices: Slice[]) => void
   onToggleExport: (name: string) => void
   onSaveSelectedAsSample: () => void
+  duration: number
+  tempo: Tempo | null
+  gridStep: number
+  onGridStep: (beats: number) => void
+  grid: number[]
+  snapEdits: boolean
+  onSnapEdits: (v: boolean) => void
+  onDownbeat: (beatIndex: number) => void
 }
+
+const newId = () => Math.random().toString(16).slice(2, 12).padEnd(10, '0')
 
 export function SlicePanel(p: Props) {
   const [sensitivity, setSensitivity] = useState(0.5)
@@ -26,6 +37,15 @@ export function SlicePanel(p: Props) {
   const [fadeOut, setFadeOut] = useState(8)
   const [normalize, setNormalize] = useState(false)
   const [busy, setBusy] = useState<'detect' | 'export' | null>(null)
+  const [keyNames, setKeyNames] = useState(true)
+  const [bpmNames, setBpmNames] = useState(true)
+  const [exportJob, setExportJob] = useState<string | null>(null)
+  const job = useJob(exportJob, (j: Job) => {
+    setExportJob(null)
+    setBusy(null)
+    if (j.status === 'error') setError(j.error)
+    else setResult(j.result as ExportResult)
+  })
   const [error, setError] = useState<string | null>(null)
   const [result, setResult] = useState<ExportResult | null>(null)
 
@@ -55,20 +75,44 @@ export function SlicePanel(p: Props) {
     try {
       // Make sure the latest hand edits are on the server first.
       await api.saveSlices(p.pid, p.slices)
-      const r = await api.exportSlices(p.pid, {
+      const j = await api.exportSlices(p.pid, {
         tracks: p.exportTracks,
         slice_ids: onlySelected && p.selectedId ? [p.selectedId] : undefined,
         fade_in_ms: fadeIn,
         fade_out_ms: fadeOut,
         normalize,
+        key_names: keyNames,
+        bpm_names: bpmNames,
       })
-      setResult(r)
+      setExportJob(j.id) // busy until the job finishes
     } catch (e) {
       setError(String((e as Error).message))
-    } finally {
       setBusy(null)
     }
   }
+
+  const hasGrid = p.grid.length > 1
+  /** One slice per grid cell (e.g. 1-bar loops), clipped to the track. */
+  const chopToGrid = () => {
+    const cells = p.grid.slice(0, -1).map((start, i) => ({
+      id: newId(),
+      start,
+      end: Math.min(p.grid[i + 1], p.duration),
+    }))
+    p.onSlices(cells.filter((c) => c.end - c.start > 0.01))
+  }
+  const snapAll = () => {
+    const out = p.slices.map((s) => {
+      const start = snapTo(p.grid, s.start)
+      let end = snapTo(p.grid, s.end)
+      if (end <= start) end = p.grid.find((t) => t > start) ?? s.end
+      return { ...s, start, end }
+    })
+    // Slices that collapsed onto the same cell become one.
+    const seen = new Set<string>()
+    p.onSlices(out.filter((s) => (seen.has(`${s.start}-${s.end}`) ? false : seen.add(`${s.start}-${s.end}`))))
+  }
+  const downbeat = p.tempo?.downbeat ?? 0
 
   return (
     <div className="panel-body">
@@ -114,6 +158,44 @@ export function SlicePanel(p: Props) {
       </section>
 
       <section>
+        <h3>Beat grid</h3>
+        {!hasGrid ? (
+          <p className="tip">Detect the tempo (BPM chip at the top) to chop and snap to the beat grid.</p>
+        ) : (
+          <>
+            <div className="chips">
+              {GRID_STEPS.map((g) => (
+                <button key={g.beats} className={`chip ${p.gridStep === g.beats ? 'on' : ''}`} onClick={() => p.onGridStep(g.beats)}>
+                  {g.label}
+                </button>
+              ))}
+            </div>
+            <div className="row">
+              <button className="primary" onClick={chopToGrid}
+                title="Replace the slices with one slice per grid cell (e.g. 1-bar loops)">
+                Chop to grid
+              </button>
+              <button onClick={snapAll} disabled={!p.slices.length} title="Move every slice edge to the nearest grid line">
+                Snap slices
+              </button>
+            </div>
+            <label className="check" style={{ marginTop: 8 }}>
+              <input type="checkbox" checked={p.snapEdits} onChange={(e) => p.onSnapEdits(e.target.checked)} />
+              Snap while editing (drag, draw, split)
+            </label>
+            <div className="field" style={{ marginTop: 8 }} title="Which tracked beat is beat 1 of the bar (used by bar-sized grids)">
+              <span>Bar starts at</span>
+              <span className="row nudge">
+                <button onClick={() => p.onDownbeat((downbeat + 3) % 4)}>◀</button>
+                <span>beat {downbeat + 1}</span>
+                <button onClick={() => p.onDownbeat((downbeat + 1) % 4)}>▶</button>
+              </span>
+            </div>
+          </>
+        )}
+      </section>
+
+      <section>
         <h3>Export slices</h3>
         <div className="chips">
           {p.tracks.map((t) => (
@@ -129,6 +211,15 @@ export function SlicePanel(p: Props) {
           <input type="checkbox" checked={normalize} onChange={(e) => setNormalize(e.target.checked)} />
           Normalize each slice
         </label>
+        <label className="check" title="Detect each slice's key / note (pitched sounds only) and add it to the file name">
+          <input type="checkbox" checked={keyNames} onChange={(e) => setKeyNames(e.target.checked)} />
+          Key in file names
+        </label>
+        <label className="check" title={p.tempo?.bpm ? `Adds ${Math.round(p.tempo.bpm)}bpm to slices at least ~1 beat long` : 'Detect the tempo first'}>
+          <input type="checkbox" checked={bpmNames && !!p.tempo?.bpm} disabled={!p.tempo?.bpm}
+            onChange={(e) => setBpmNames(e.target.checked)} />
+          BPM in loop names
+        </label>
         <div className="row">
           <button className="primary" onClick={() => doExport(false)}
             disabled={busy !== null || !p.slices.length || !p.exportTracks.length}>
@@ -138,6 +229,7 @@ export function SlicePanel(p: Props) {
             Selected only
           </button>
         </div>
+        {busy === 'export' && <JobProgress job={job} fallback="Exporting…" />}
         {result && (
           <div className="result">
             {result.count} files → <a href={result.url}>download zip</a>

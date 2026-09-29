@@ -68,6 +68,7 @@ class Store:
             "slices": [],
             "samples": [],
             "pads": [None] * PAD_SLOTS,
+            "tempo": None,
         }
         self._write(pid, project)
         return project
@@ -97,6 +98,7 @@ class Store:
         # Projects created before drum pads existed.
         pads = project.setdefault("pads", [])
         pads.extend([None] * (PAD_SLOTS - len(pads)))
+        project.setdefault("tempo", None)
         return project
 
     def _write(self, pid: str, project: dict) -> None:

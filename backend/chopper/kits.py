@@ -11,6 +11,7 @@ import librosa
 import numpy as np
 
 from . import analysis, audio
+from .naming import export_name
 from .slicing import detect_onsets
 from .store import new_id, safe_name
 
@@ -334,8 +335,10 @@ def export_kit(
     kit_name: str,
     norm: bool = False,
     pad_labels: dict[str, str] | None = None,
+    bpm: float | None = None,
 ) -> Path:
-    """Zip samples into <kit>/<category>/<name>[_<key>].wav.
+    """Zip samples into <kit>/<category>/<name>[_<bpm>bpm][_<key>].wav (BPM only on
+    sounds at least ~a beat long, i.e. loops and phrases, not one-shots).
 
     pad_labels: {sample id: 'A01'} exports a pad kit instead: a flat folder of
     <kit>/A01_<name>[_<key>].wav, in pad order.
@@ -350,11 +353,11 @@ def export_kit(
             y, sr = audio.read(project_dir / s["file"])
             if norm:
                 y = audio.normalize(y)
-            key = f"_{s['key'].replace(' ', '')}" if s.get("key") else ""
+            name = export_name(safe_name(s["name"]), bpm, s.get("duration") or y.shape[1] / sr, s.get("key"))
             if pad_labels:
-                base = f"{kit}/{pad_labels[s['id']]}_{safe_name(s['name'])}{key}"
+                base = f"{kit}/{pad_labels[s['id']]}_{name}"
             else:
-                base = f"{kit}/{safe_name(s['category'])}/{safe_name(s['name'])}{key}"
+                base = f"{kit}/{safe_name(s['category'])}/{name}"
             path, n = f"{base}.wav", 2
             while path in used:
                 path, n = f"{base}_{n}.wav", n + 1

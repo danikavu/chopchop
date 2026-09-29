@@ -9,7 +9,8 @@ from pathlib import Path
 import librosa
 import numpy as np
 
-from . import audio
+from . import analysis, audio
+from .naming import export_name
 from .store import new_id, safe_name
 
 HOP = 256
@@ -144,8 +145,16 @@ def export_slices(
     fade_in_ms: float = 2.0,
     fade_out_ms: float = 8.0,
     norm: bool = False,
+    bpm: float | None = None,
+    keys: bool = False,
+    progress=None,
 ) -> Path:
-    """Cut every slice out of every selected track into one zip, one folder per track."""
+    """Cut every slice out of every selected track into one zip, one folder per track.
+
+    bpm:  tag slices at least ~a beat long with the tempo (drums_004_96bpm.wav).
+    keys: detect each slice's key / note and add it (bass_012_E1.wav). Slow-ish
+          (~35 ms per slice per track), hence the progress callback.
+    """
     if not slices:
         raise ValueError("no slices to export")
     if not tracks:
@@ -155,15 +164,23 @@ def export_slices(
     zip_path = project_dir / "exports" / f"slices-{stamp}-{new_id()[:4]}.zip"
     zip_path.parent.mkdir(parents=True, exist_ok=True)
     width = max(3, len(str(len(ordered))))
+    total, done = len(tracks) * len(ordered), 0
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
-        for track in tracks:
+        for t_i, track in enumerate(tracks, 1):
             src = project_dir / track["file"]
             y_full, sr = audio.read(src)
             label = safe_name(track["name"])
+            drums = analysis.is_drum_track(track["name"])
             for i, s in enumerate(ordered, 1):
                 a, b = int(s["start"] * sr), int(s["end"] * sr)
-                seg = audio.apply_fades(y_full[:, a:b], sr, fade_in_ms, fade_out_ms)
+                raw = y_full[:, a:b]
+                key = analysis.key_of(audio.to_mono(raw), sr, drums) if keys and raw.shape[1] else None
+                seg = audio.apply_fades(raw, sr, fade_in_ms, fade_out_ms)
                 if norm:
                     seg = audio.normalize(seg)
-                zf.writestr(f"{label}/{label}_{i:0{width}d}.wav", audio.wav_bytes24(seg, sr))
+                name = export_name(f"{label}_{i:0{width}d}", bpm, s["end"] - s["start"], key)
+                zf.writestr(f"{label}/{name}.wav", audio.wav_bytes24(seg, sr))
+                done += 1
+                if progress and (done % 10 == 0 or done == total):
+                    progress(done / total, f"Track {t_i}/{len(tracks)} ({track['name']}) · slice {i}/{len(ordered)}")
     return zip_path

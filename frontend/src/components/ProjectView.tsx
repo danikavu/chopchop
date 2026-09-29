@@ -2,11 +2,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type WaveSurfer from 'wavesurfer.js'
 import { api } from '../api'
 import type { Job, Meta, Project, Sample, Slice } from '../types'
-import { fmtTime, label, stopPreview, trackColor, useJob } from '../util'
+import { fmtTime, gridPoints, isDrumTrack, label, snapTo, stopPreview, trackColor, useJob } from '../util'
 import { DrumPads } from './DrumPads'
 import { JobProgress, SEPARATION_STEPS } from './JobProgress'
 import { KitPanel } from './KitPanel'
 import { SampleBrowser } from './SampleBrowser'
+import { TempoControl } from './TempoControl'
 import { SampleEditor } from './SampleEditor'
 import { SlicePanel } from './SlicePanel'
 import { TrackLane } from './TrackLane'
@@ -39,6 +40,24 @@ export function ProjectView({ pid, meta, onBack }: Props) {
   const [tab, setTab] = useState<'slice' | 'kit'>('slice')
   const [editing, setEditing] = useState<Sample | null>(null)
   const [selectedPad, setSelectedPad] = useState<number | null>(null)
+  const [showBeats, setShowBeats] = useState(true)
+  const [gridStep, setGridStep] = useState(1)
+  const [snapEdits, setSnapEdits] = useState(false)
+  const grid = useMemo(
+    () => gridPoints(project?.tempo?.beats ?? [], gridStep, project?.tempo?.downbeat ?? 0),
+    [project?.tempo, gridStep],
+  )
+  // Snapping for slice edits (read from lane callbacks, which are created once).
+  const snapRef = useRef<number[] | null>(null)
+  snapRef.current = snapEdits && grid.length > 1 ? grid : null
+  const snapSlice = (s: Slice): Slice => {
+    const g = snapRef.current
+    if (!g) return s
+    const start = snapTo(g, s.start)
+    let end = snapTo(g, s.end)
+    if (end <= start) end = g.find((t) => t > start) ?? s.end
+    return { ...s, start, end }
+  }
   const [sepJobId, setSepJobId] = useState<string | null>(null)
   const [model, setModel] = useState(() => meta.models.find((m) => m.default)?.id ?? meta.models[0]?.id ?? '')
 
@@ -73,6 +92,15 @@ export function ProjectView({ pid, meta, onBack }: Props) {
     [pid],
   )
 
+  const autoTempo = async () => {
+    try {
+      const tempo = await api.detectTempo(pid)
+      setProject((p) => (p ? { ...p, tempo } : p))
+    } catch {
+      /* leave it for the user to run by hand */
+    }
+  }
+
   const reload = useCallback(async () => {
     const p = await api.getProject(pid)
     setProject(p)
@@ -89,6 +117,7 @@ export function ProjectView({ pid, meta, onBack }: Props) {
         focusedRef.current = start
         setFocusedState(start)
         setExportTracks((stems.length ? stems : p.tracks).map((t) => t.name))
+        if (!p.tempo && stems.some((t) => isDrumTrack(t.name))) void autoTempo()
       })
       .catch((e) => setError(e.message))
     // Resume watching a separation that is still running (e.g. after a reload).
@@ -175,9 +204,12 @@ export function ProjectView({ pid, meta, onBack }: Props) {
           ws.setScroll(lastScroll.current)
         } else lanes.current.delete(name)
       },
-      onSliceChange: (s: Slice) => setSlices(slicesRef.current.map((x) => (x.id === s.id ? s : x))),
+      onSliceChange: (s: Slice) => {
+        const snapped = snapSlice(s)
+        setSlices(slicesRef.current.map((x) => (x.id === s.id ? snapped : x)))
+      },
       onSliceCreate: (start: number, end: number) => {
-        const s = { id: newId(), start, end }
+        const s = snapSlice({ id: newId(), start, end })
         setSlices([...slicesRef.current, s])
         setSelectedId(s.id)
       },
@@ -193,7 +225,7 @@ export function ProjectView({ pid, meta, onBack }: Props) {
   const togglePlay = () => void focusedLane()?.playPause()
 
   const splitAtPlayhead = () => {
-    const t = timeRef.current
+    const t = snapRef.current ? snapTo(snapRef.current, timeRef.current) : timeRef.current
     const cur = slicesRef.current
     const hit = cur.find((s) => s.start < t - 0.005 && s.end > t + 0.005)
     if (hit) {
@@ -329,6 +361,7 @@ export function ProjectView({ pid, meta, onBack }: Props) {
     try {
       for (const f of Array.from(files)) await api.importStem(pid, f)
       const p = await reload()
+      if (!p.tempo && p.tracks.some((t) => isDrumTrack(t.name))) void autoTempo()
       setExportTracks(p.tracks.filter((t) => t.kind === 'stem').map((t) => t.name))
       flash(`Imported ${files.length} stem${files.length > 1 ? 's' : ''}`)
     } catch (e) {
@@ -364,6 +397,14 @@ export function ProjectView({ pid, meta, onBack }: Props) {
         <button className="link" onClick={onBack}>← Projects</button>
         <h1 className="title">{project.name}</h1>
         <span className="muted">{fmtTime(project.duration ?? 0)} · {project.sample_rate} Hz</span>
+        <TempoControl
+          pid={pid}
+          tempo={project.tempo}
+          tracks={tracks}
+          showBeats={showBeats}
+          onShowBeats={setShowBeats}
+          onChange={(tempo) => setProject((p) => (p ? { ...p, tempo } : p))}
+        />
         <div className="spacer" />
         {notice && <span className="notice">{notice}</span>}
         <input ref={fileInput} type="file" accept="audio/*" multiple hidden
@@ -437,6 +478,8 @@ export function ProjectView({ pid, meta, onBack }: Props) {
                 exportChecked={exportTracks.includes(t.name)}
                 timeline={i === 0}
                 showScrollbar={i === tracks.length - 1}
+                beats={showBeats ? project.tempo?.beats : undefined}
+                downbeat={project.tempo?.downbeat ?? 0}
                 {...laneEvents}
                 onDelete={t.kind === 'stem' ? deleteTrack : undefined}
               />
@@ -522,6 +565,21 @@ export function ProjectView({ pid, meta, onBack }: Props) {
               }}
               onToggleExport={laneEvents.onToggleExport}
               onSaveSelectedAsSample={saveSelectedAsSample}
+              duration={project.duration ?? 0}
+              tempo={project.tempo}
+              gridStep={gridStep}
+              onGridStep={setGridStep}
+              grid={grid}
+              snapEdits={snapEdits}
+              onSnapEdits={setSnapEdits}
+              onDownbeat={async (downbeat) => {
+                try {
+                  const tempo = await api.setTempo(pid, { downbeat })
+                  setProject((p) => (p ? { ...p, tempo } : p))
+                } catch (e) {
+                  setError((e as Error).message)
+                }
+              }}
             />
           ) : (
             <KitPanel key={tracks.map((t) => t.name).join()} pid={pid} tracks={tracks} onDone={() => void reload()} />

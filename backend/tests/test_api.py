@@ -59,9 +59,12 @@ def test_full_flow(client):
     # Detect slices on the drum stem, export over both tracks
     slices = client.post(f"/api/projects/{pid}/slices/detect", json={"track": "drums"}).json()["slices"]
     assert len(slices) == len(truth)
-    r = client.post(f"/api/projects/{pid}/slices/export", json={"tracks": ["drums", "mix"]})
+    r = client.post(f"/api/projects/{pid}/slices/export",
+                    json={"tracks": ["drums", "mix"], "key_names": False, "bpm_names": False})
     assert r.status_code == 200, r.text
-    z = zipfile.ZipFile(io.BytesIO(client.get(r.json()["url"]).content))
+    j = wait(client, r.json())
+    assert j["status"] == "done", j["error"]
+    z = zipfile.ZipFile(io.BytesIO(client.get(j["result"]["url"]).content))
     names = z.namelist()
     assert len(names) == 2 * len(truth)
     assert "drums/drums_001.wav" in names and "mix/mix_001.wav" in names
@@ -209,3 +212,54 @@ def test_non_drum_tracks_use_their_general_category(client):
     # Manually saved regions follow the same rule.
     s = client.post(f"/api/projects/{pid}/samples", json={"track": "mix", "start": 0.0, "end": 0.3}).json()
     assert (s["category"], s["name"]) == ("mix", "mix_" + s["name"].split("_")[1])
+
+
+def test_tempo_detect_and_adjust(client):
+    y, beats = synth.groove(bpm=96, bars=8)
+    pid = client.post("/api/projects", files={"file": ("g.wav", wav(y), "audio/wav")}).json()["id"]
+    assert client.get(f"/api/projects/{pid}").json()["tempo"] is None
+    client.post(f"/api/projects/{pid}/tracks", files={"file": ("Drums.wav", wav(y), "audio/wav")})
+
+    t = client.post(f"/api/projects/{pid}/tempo", json={}).json()
+    assert t["track"] == "drums" and t["bpm"] == pytest.approx(96, abs=0.3) and t["confidence"] > 0.8
+    n = len(t["beats"])
+    assert abs(n - len(beats)) <= 2
+
+    doubled = client.put(f"/api/projects/{pid}/tempo", json={"bpm": t["bpm"] * 2}).json()
+    assert doubled["bpm"] == pytest.approx(192, abs=0.6) and doubled["source"] == "manual"
+    assert len(doubled["beats"]) == 2 * n - 1
+    halved = client.put(f"/api/projects/{pid}/tempo", json={"bpm": doubled["bpm"] / 2}).json()
+    assert len(halved["beats"]) == n
+    assert client.get(f"/api/projects/{pid}").json()["tempo"]["bpm"] == halved["bpm"]
+    assert halved["detected_bpm"] == t["bpm"]  # original detection kept for reference
+
+
+def test_export_names_carry_bpm_and_key(client):
+    # A 96 BPM groove plus a sustained A2 bass note under it.
+    y, _ = synth.groove(bpm=96, bars=4)
+    bass = synth.place([(0.2, synth.tone(45, 2.4))], len(y) / SR)[: len(y)]
+    pid = client.post("/api/projects", files={"file": ("g.wav", wav(y + bass), "audio/wav")}).json()["id"]
+    client.post(f"/api/projects/{pid}/tracks", files={"file": ("Drums.wav", wav(y), "audio/wav")})
+    client.post(f"/api/projects/{pid}/tracks", files={"file": ("Bass.wav", wav(bass), "audio/wav")})
+    assert client.post(f"/api/projects/{pid}/tempo", json={}).json()["bpm"] == pytest.approx(96, abs=0.3)
+
+    # One 2-beat loop and one kick-length one-shot.
+    beat = 60 / 96
+    client.put(f"/api/projects/{pid}/slices", json={"slices": [
+        {"start": 0.2, "end": 0.2 + 2 * beat}, {"start": 0.2 + 4 * beat, "end": 0.2 + 4 * beat + 0.2}]})
+    assert client.post(f"/api/projects/{pid}/slices/export", json={"tracks": []}).status_code == 400
+    j = wait(client, client.post(f"/api/projects/{pid}/slices/export", json={"tracks": ["drums", "bass"]}).json())
+    assert j["status"] == "done", j["error"]
+    names = sorted(zipfile.ZipFile(io.BytesIO(client.get(j["result"]["url"]).content)).namelist())
+    # Loop: BPM (+ key where there is one); one-shot: no BPM; hats/snares never get a key.
+    assert "bass/bass_001_96bpm_A2.wav" in names, names
+    assert "drums/drums_001_96bpm.wav" in names, names  # a drum loop has no key
+    assert any(n.startswith("drums/drums_002") and "bpm" not in n for n in names), names
+
+    # Kit export: phrase-length samples get the BPM, one-shots don't.
+    loop = client.post(f"/api/projects/{pid}/samples", json={"track": "bass", "start": 0.2, "end": 0.2 + 2 * beat}).json()
+    shot = client.post(f"/api/projects/{pid}/samples", json={"track": "drums", "start": 0.19, "end": 0.45}).json()
+    r = client.post(f"/api/projects/{pid}/samples/export", json={"kit_name": "k"}).json()
+    names = zipfile.ZipFile(io.BytesIO(client.get(r["url"]).content)).namelist()
+    assert f"k/bass/{loop['name']}_96bpm_{loop['key'].replace(' ', '')}.wav" in names, names
+    assert any(n.startswith(f"k/kick/{shot['name']}") and "bpm" not in n for n in names), names

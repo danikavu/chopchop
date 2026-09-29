@@ -240,3 +240,31 @@ input[type='checkbox'] { accent-color: var(--accent); margin: 0; }
 .device.cuda, .device.mps, .device.directml { color: var(--ok); }
 .device.cpu { color: #fbbf24; }
 .note { margin: -4px 0 10px; line-height: 1.5; }
+
+/* ---------- tempo ---------- */
+.tempo { position: relative; }
+.tempo-chip { display: inline-flex; align-items: center; gap: 6px; }
+.tempo-chip b { font: 600 13px ui-monospace, monospace; }
+.tempo-chip .tag { font-size: 11px; color: var(--muted); padding: 0 5px; border-radius: 4px; background: var(--bg); }
+.tempo-chip.high { border-color: rgba(52, 211, 153, 0.5); }
+.tempo-chip.mid { border-color: rgba(251, 191, 36, 0.5); }
+.tempo-chip.low { border-color: rgba(248, 113, 113, 0.5); }
+.tempo-pop {
+  position: absolute; top: calc(100% + 6px); left: 0; z-index: 30; width: 360px; padding: 14px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+}
+.tempo-pop .field { margin: 0; }
+.tempo-pop .grow { flex: 1; }
+.tempo-big { margin-top: 12px; font-size: 13px; }
+.tempo-num { font: 600 28px ui-monospace, monospace; }
+.small { font-size: 12px; }
+.tempo-adjust { margin: 10px 0; }
+.bpm-input { width: 70px; }
+.conf-title { margin: 10px 0 6px; font-size: 12px; color: var(--muted); }
+.conf.high { color: var(--ok); } .conf.mid { color: #fbbf24; } .conf.low { color: var(--danger); }
+.conf-row { display: grid; grid-template-columns: 96px 1fr 38px; align-items: center; gap: 8px; font-size: 12px; margin-bottom: 4px; }
+.conf-bar { height: 6px; background: var(--bg); border-radius: 3px; overflow: hidden; }
+.conf-bar div { height: 100%; background: var(--accent); }
+.alts { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 10px 0; font-size: 12px; }
+.alts button { padding: 3px 8px; }
+.nudge { gap: 6px; } .nudge button { padding: 2px 8px; }

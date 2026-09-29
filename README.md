@@ -66,7 +66,15 @@ lighter engine without PyTorch. You can then import stems you already have (e.g.
    - <kbd>Space</kbd> play/pause · <kbd>S</kbd> split at the playhead ·
      <kbd>Del</kbd> delete · <kbd>←</kbd>/<kbd>→</kbd> step through and audition ·
      <kbd>Enter</kbd> save the selected slice as a sample.
-   - **Export** writes a zip with one folder per selected track (`drums/drums_001.wav`, …).
+   - **Beat grid**, once the tempo is known:
+     - pick a resolution from 1/16 up to 4 bars;
+     - **Chop to grid** makes one slice per cell, e.g. 1-bar loops;
+     - **Snap slices** moves every slice edge onto the grid;
+     - **Snap while editing** does the same when you drag, draw or split.
+     The grid follows the tracked beats, so it stays aligned with a drummer who drifts.
+     Bar lines are highlighted, and "Bar starts at beat ◀ n ▶" corrects the detected downbeat.
+   - **Export** writes a zip with one folder per selected track. It runs in the background
+     with a progress bar.
 3. **Kits & bits** tab: **Build drum kit** on the drum stem (optionally loading it onto the
    pads), or **Extract sound bits**
    (chops or phrases) from any stem. Running it again on the same track replaces the samples
@@ -87,6 +95,22 @@ lighter engine without PyTorch. You can then import stems you already have (e.g.
 5. The **sample browser** groups samples by category. You can play, rename, recategorize and
    set the key of each sample, trim it (✂), or re-detect its key (♪). **Export kit** zips the
    samples currently shown as `kit/<category>/<name>_<key>.wav`.
+
+### Export file names
+
+Every export uses `<name>[_<bpm>bpm][_<key>].wav`:
+
+| Example | Why |
+|---|---|
+| `bass_001_96bpm_A2.wav` | a 2-beat bass loop: BPM plus its detected note |
+| `drums_004_96bpm.wav` | a 1-bar drum loop: BPM, but no key (a drum loop has none) |
+| `kick_01_F#1.wav` | a one-shot: no BPM, plus the kick's pitch |
+| `A09_hihat_01.wav` | a pad export; hats and snares never get a key |
+
+- **BPM** is added only to sounds at least about one beat long (loops, phrases), using
+  the project tempo.
+- **Key** comes from the sample's detected (or hand-edited) key. Slice exports detect
+  it per slice; turn this off with **Key in file names** in the Slice panel.
 
 ## How the detection works
 
@@ -113,6 +137,25 @@ Everything is heuristic DSP (librosa/numpy), with no training data.
     misread as a clap.
 - **Auto kit.** Picks the kit round-robin across drum types (kick, snare, hat, clap, open
   hat, perc, …), so a 16-pad kit gets variety before depth.
+- **Tempo (BPM).** Detected automatically once there's a drum stem; the **BPM** chip in the
+  top bar has details and controls. Swing and unquantized live playing are handled like this:
+  - It scores candidate tempos by how periodic the drum hits are at 1, 2 and 4 beats.
+    Swing shifts the off-beat hats but not the quarter-note pulse, so swung and straight
+    grooves read the same tempo.
+  - It tracks individual beats and snaps each one to a real hit, so the grid follows a
+    drummer who speeds up or slows down.
+  - Steady tracks get a sub-frame precise BPM from a straight-line fit over all the beats.
+  - Drifting tracks report the median tempo and the range, e.g. `92.3–95.4`.
+  - Swing is measured from where the off-beat hits fall between beats, MPC-style, e.g.
+    `60% (16ths)`.
+  - **Confidence** is shown as a breakdown:
+    - *clarity*: how clearly one tempo stands out;
+    - *stability*: whether the same tempo holds across the track;
+    - *on grid*: how many beats land on a hit;
+    - *timing*: how tight the playing is;
+    - *half/double*: how sure it isn't half or double time.
+  - Half/double time is the classic ambiguity (72 vs 144). The panel lists the
+    alternatives, and ÷2 / ×2 buttons, typing a value or tap tempo override it.
 - **Key.** One-shots under 1.5 s get a note from pYIN pitch tracking (e.g. `F#1`). Longer
   bits get a key from chroma matched against Krumhansl–Kessler profiles (e.g. `A min`).
   Relative major and minor keys can be confused on short phrases, so keys are editable.
