@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../api'
 import { chokeGroupFor, preload, trigger } from '../padEngine'
 import type { ExportResult, Job, Sample, Track } from '../types'
-import { categoryColor, label, useJob } from '../util'
+import { categoryColor, isDrumTrack, label, NOT_DRUMS_NOTE, useJob } from '../util'
 import { JobProgress } from './JobProgress'
 
 export const PADS_PER_BANK = 16
@@ -243,7 +243,7 @@ export function DrumPads(p: Props) {
             sound, spread across kicks, snares, hats and percussion.
           </p>
           <label className="field">
-            <span>Drum track</span>
+            <span>Source track</span>
             <select value={drumTrack} onChange={(e) => {
               userPicked.current = true
               setDrumTrack(e.target.value)
@@ -253,6 +253,7 @@ export function DrumPads(p: Props) {
               ))}
             </select>
           </label>
+          {drumTrack && !isDrumTrack(drumTrack) && <div className="warn small note">{NOT_DRUMS_NOTE}</div>}
           <label className="field">
             <span>Kit size</span>
             <select value={kitSize} onChange={(e) => setKitSize(Number(e.target.value))}>

@@ -9,7 +9,7 @@ import numpy as np
 from scipy.signal import find_peaks
 
 DRUM_CATEGORIES = ["kick", "snare", "clap", "hihat", "open_hat", "cymbal", "tom", "perc"]
-MELODIC_CATEGORIES = ["vocal", "bass", "keys", "guitar", "synth", "melodic", "fx", "other"]
+MELODIC_CATEGORIES = ["vocal", "bass", "keys", "guitar", "synth", "melodic", "fx", "mix", "other"]
 CATEGORIES = DRUM_CATEGORIES + MELODIC_CATEGORIES
 
 # Drum hits that don't usefully carry a pitch label.
@@ -136,13 +136,19 @@ def classify_drum(f: dict) -> tuple[str, float]:
     return "perc", 0.4
 
 
+def is_drum_track(track_name: str) -> bool:
+    """Only drum stems get per-hit drum labels (kick, snare, hat…)."""
+    name = track_name.lower()
+    return "drum" in name or "perc" in name
+
+
 def category_for_track(track_name: str) -> str:
-    """Default category for sound bits cut from a non-drum stem."""
+    """General category for everything cut from a non-drum track (also its file-name prefix)."""
     name = track_name.lower()
     for key, cat in (
         ("vocal", "vocal"), ("voice", "vocal"), ("bass", "bass"), ("piano", "keys"),
         ("keys", "keys"), ("guitar", "guitar"), ("synth", "synth"), ("other", "melodic"),
-        ("instrumental", "melodic"), ("mix", "melodic"),
+        ("instrumental", "melodic"), ("mix", "mix"),
     ):
         if key in name:
             return cat

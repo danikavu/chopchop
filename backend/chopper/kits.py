@@ -188,6 +188,9 @@ def extract(
 
     ref_peak = float(np.max(np.abs(y))) + 1e-12
     default_cat = analysis.category_for_track(track["name"])
+    # Drum labels only make sense on a drum track; anything else (vocals, bass, the
+    # full mix…) is labelled, and named, by its general category.
+    drum_labels = mode == "drums" and analysis.is_drum_track(track["name"])
     cands = []
     for i, (a, b) in enumerate(regions):
         if i % 10 == 0:
@@ -201,7 +204,7 @@ def extract(
         if 20 * np.log10(np.max(np.abs(seg)) / ref_peak + 1e-12) < -30:
             continue
         f = analysis.features(seg, sr, pre=y[max(0, a - int(0.04 * sr)):a])
-        if mode == "drums":
+        if drum_labels:
             cat, conf = analysis.classify_drum(f)
         else:
             cat, conf = default_cat, 0.5
@@ -304,11 +307,10 @@ def analyse_region(project_dir: Path, track: dict, start: float, end: float, cat
         raise ValueError("empty region")
     f = analysis.features(y, sr)
     if category is None:
-        default = analysis.category_for_track(track["name"])
-        if "drum" in track["name"].lower() or ((end - start) < 0.6 and default in ("other", "melodic")):
+        if analysis.is_drum_track(track["name"]):
             category, conf = analysis.classify_drum(f)
         else:
-            category, conf = default, 0.5
+            category, conf = analysis.category_for_track(track["name"]), 0.5
     else:
         conf = 1.0
     y22 = librosa.resample(y, orig_sr=sr, target_sr=audio.ANALYSIS_SR)

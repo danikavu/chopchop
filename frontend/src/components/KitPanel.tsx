@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { api } from '../api'
 import type { Job, Track } from '../types'
-import { label, useJob } from '../util'
+import { isDrumTrack, label, NOT_DRUMS_NOTE, useJob } from '../util'
 import { JobProgress } from './JobProgress'
 import { Slider } from './Slider'
 
@@ -83,6 +83,7 @@ export function KitPanel({ pid, tracks, onDone }: Props) {
           <span>Drum track</span>
           {trackSelect(drumTrack, setDrumTrack)}
         </label>
+        {drumTrack && !isDrumTrack(drumTrack) && <div className="warn small note">{NOT_DRUMS_NOTE}</div>}
         <Slider label="Sensitivity" value={drumSens} min={0} max={1} step={0.01} onChange={setDrumSens}
           format={(v) => `${Math.round(v * 100)}%`} />
         <Slider label="Uniqueness" value={drumSim} min={0.7} max={0.995} step={0.005} onChange={setDrumSim}

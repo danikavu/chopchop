@@ -26,6 +26,12 @@ def client(tmp_path):
     return TestClient(create_app(Store(tmp_path)))
 
 
+def new_project_with_drums(client, y):
+    pid = client.post("/api/projects", files={"file": ("loop.wav", wav(y), "audio/wav")}).json()["id"]
+    client.post(f"/api/projects/{pid}/tracks", files={"file": ("Drums.wav", wav(y), "audio/wav")})
+    return pid
+
+
 def wait(client, job):
     for _ in range(300):
         j = client.get(f"/api/jobs/{job['id']}").json()
@@ -111,9 +117,9 @@ def test_unknown_project(client):
 
 def test_auto_kit_loads_pads(client):
     y, _ = synth.drum_loop(bars=2)
-    pid = client.post("/api/projects", files={"file": ("loop.wav", wav(y), "audio/wav")}).json()["id"]
+    pid = new_project_with_drums(client, y)
     j = wait(client, client.post(f"/api/projects/{pid}/kits",
-                                 json={"track": "mix", "mode": "drums", "kit_size": 16, "load_pads": True}).json())
+                                 json={"track": "drums", "mode": "drums", "kit_size": 16, "load_pads": True}).json())
     assert j["status"] == "done", j["error"]
     p = client.get(f"/api/projects/{pid}").json()
     cat = {s["id"]: s["category"] for s in p["samples"]}
@@ -149,8 +155,8 @@ def test_old_projects_get_pads(client, tmp_path):
 
 def test_bulk_delete_samples(client):
     y, _ = synth.drum_loop(bars=2)
-    pid = client.post("/api/projects", files={"file": ("loop.wav", wav(y), "audio/wav")}).json()["id"]
-    wait(client, client.post(f"/api/projects/{pid}/kits", json={"track": "mix", "load_pads": True}).json())
+    pid = new_project_with_drums(client, y)
+    wait(client, client.post(f"/api/projects/{pid}/kits", json={"track": "drums", "load_pads": True}).json())
     p = client.get(f"/api/projects/{pid}").json()
     ids = [s["id"] for s in p["samples"]]
     assert len(ids) == 3 and any(p["pads"])
@@ -181,3 +187,25 @@ def test_ui_served_with_js_mime_even_if_os_registry_is_wrong(tmp_path, monkeypat
     assert "javascript" in client.get("/assets/app.js").headers["content-type"]
     assert client.get("/assets/app.css").headers["content-type"].startswith("text/css")
     assert client.get("/").headers["content-type"].startswith("text/html")
+
+
+def test_non_drum_tracks_use_their_general_category(client):
+    # Drum-like audio on a vocals / bass / mix track must NOT be labelled kick/snare/hat.
+    y, _ = synth.drum_loop(bars=2)
+    pid = client.post("/api/projects", files={"file": ("loop.wav", wav(y), "audio/wav")}).json()["id"]
+    for name in ("Vocals", "Bass"):
+        client.post(f"/api/projects/{pid}/tracks", files={"file": (f"{name}.wav", wav(y), "audio/wav")})
+    for track in ("vocals", "bass", "mix"):
+        j = wait(client, client.post(f"/api/projects/{pid}/kits",
+                                     json={"track": track, "kit_size": 16, "load_pads": True}).json())
+        assert j["status"] == "done", j["error"]
+    samples = client.get(f"/api/projects/{pid}").json()["samples"]
+    by_track = {}
+    for s in samples:
+        by_track.setdefault(s["track"], set()).add(s["category"])
+        assert s["name"].startswith(s["category"] + "_"), s["name"]
+    assert by_track == {"vocals": {"vocal"}, "bass": {"bass"}, "mix": {"mix"}}
+
+    # Manually saved regions follow the same rule.
+    s = client.post(f"/api/projects/{pid}/samples", json={"track": "mix", "start": 0.0, "end": 0.3}).json()
+    assert (s["category"], s["name"]) == ("mix", "mix_" + s["name"].split("_")[1])

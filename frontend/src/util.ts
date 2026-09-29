@@ -37,12 +37,22 @@ const CATEGORY_COLORS: Record<string, string> = {
   synth: '#22d3ee',
   melodic: '#60a5fa',
   fx: '#c084fc',
+  mix: '#cbd5e1',
   other: '#9aa4b8',
 }
 
 export function categoryColor(cat: string): string {
   return CATEGORY_COLORS[cat] ?? '#9aa4b8'
 }
+
+/** Mirrors the backend: only drum tracks get kick/snare/hat labels. */
+export function isDrumTrack(name: string): boolean {
+  const n = name.toLowerCase()
+  return n.includes('drum') || n.includes('perc')
+}
+
+export const NOT_DRUMS_NOTE =
+  'Not a drum track: sounds are labelled and named by the track type (vocal_01, bass_01, …) instead of kick / snare / hat.'
 
 export function label(s: string): string {
   return s.replace(/_/g, ' ')

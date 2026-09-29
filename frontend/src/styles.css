@@ -239,3 +239,4 @@ input[type='checkbox'] { accent-color: var(--accent); margin: 0; }
 .warn.small { font-size: 12px; margin-top: 4px; }
 .device.cuda, .device.mps, .device.directml { color: var(--ok); }
 .device.cpu { color: #fbbf24; }
+.note { margin: -4px 0 10px; line-height: 1.5; }
