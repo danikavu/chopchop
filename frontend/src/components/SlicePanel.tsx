@@ -13,7 +13,7 @@ interface Props {
   selectedId: string | null
   exportTracks: string[]
   onFocus: (name: string) => void
-  onSlices: (slices: Slice[]) => void
+  onSlices: (slices: Slice[], label: string | null) => void
   onToggleExport: (name: string) => void
   onSaveSelectedAsSample: () => void
   duration: number
@@ -60,7 +60,7 @@ export function SlicePanel(p: Props) {
         max_len: maxLen > 0 ? maxLen : null,
         gate_db: gate,
       })
-      p.onSlices(r.slices)
+      p.onSlices(r.slices, null) // the server already recorded "Detect slices"
     } catch (e) {
       setError(String((e as Error).message))
     } finally {
@@ -99,7 +99,7 @@ export function SlicePanel(p: Props) {
       start,
       end: Math.min(p.grid[i + 1], p.duration),
     }))
-    p.onSlices(cells.filter((c) => c.end - c.start > 0.01))
+    p.onSlices(cells.filter((c) => c.end - c.start > 0.01), 'Chop to grid')
   }
   const snapAll = () => {
     const out = p.slices.map((s) => {
@@ -110,7 +110,7 @@ export function SlicePanel(p: Props) {
     })
     // Slices that collapsed onto the same cell become one.
     const seen = new Set<string>()
-    p.onSlices(out.filter((s) => (seen.has(`${s.start}-${s.end}`) ? false : seen.add(`${s.start}-${s.end}`))))
+    p.onSlices(out.filter((s) => (seen.has(`${s.start}-${s.end}`) ? false : seen.add(`${s.start}-${s.end}`))), 'Snap slices')
   }
   const downbeat = p.tempo?.downbeat ?? 0
 
@@ -142,7 +142,7 @@ export function SlicePanel(p: Props) {
         <div className="stat">
           {p.slices.length} slice{p.slices.length === 1 ? '' : 's'}
           {p.slices.length > 0 && (
-            <button className="link" onClick={() => p.onSlices([])}>
+            <button className="link" onClick={() => p.onSlices([], 'Clear slices')}>
               clear
             </button>
           )}

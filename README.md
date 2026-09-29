@@ -112,6 +112,19 @@ Every export uses `<name>[_<bpm>bpm][_<key>].wav`:
 - **Key** comes from the sample's detected (or hand-edited) key. Slice exports detect
   it per slice; turn this off with **Key in file names** in the Slice panel.
 
+### Undo / redo
+
+**Ctrl+Z** on Windows and Linux, **⌘Z** on macOS, or the ↶ ↷ buttons in the top bar.
+Redo is **Ctrl+Shift+Z** / **⌘⇧Z** (or **Ctrl+Y**). The tooltips name the step, e.g.
+"Undo Delete slice".
+
+- **What it covers:** slice edits, pad changes, sample deletes, renames and trims, kit
+  rebuilds, stem imports or removals, stem separation (one step), and tempo changes.
+- **Deleted and replaced audio** is kept until no undo step needs it, so undoing a
+  delete or a trim brings the sound back.
+- **Limits:** up to 100 steps per project. The history lasts until the server restarts.
+- **In text fields**, Ctrl+Z / ⌘Z does the normal text undo instead.
+
 ## How the detection works
 
 Everything is heuristic DSP (librosa/numpy), with no training data.

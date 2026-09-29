@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type WaveSurfer from 'wavesurfer.js'
-import { api } from '../api'
+import { api, onHistory, type UndoState } from '../api'
 import type { Job, Meta, Project, Sample, Slice } from '../types'
 import { fmtTime, gridPoints, isDrumTrack, label, snapTo, stopPreview, trackColor, useJob } from '../util'
 import { DrumPads } from './DrumPads'
@@ -13,6 +13,7 @@ import { SlicePanel } from './SlicePanel'
 import { TrackLane } from './TrackLane'
 
 const HEAD_W = 168
+const MOD = /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘' : 'Ctrl+'
 const MAX_ZOOM = 3000
 
 const newId = () => Math.random().toString(16).slice(2, 12).padEnd(10, '0')
@@ -77,20 +78,62 @@ export function ProjectView({ pid, meta, onBack }: Props) {
     window.setTimeout(() => setNotice((n) => (n === msg ? null : n)), 2500)
   }
 
+  // Slice edits are saved after a short pause (a drag fires many updates); `label`
+  // names the undo step, null means local-only (e.g. loading from the server).
+  const pendingSave = useRef<{ slices: Slice[]; label: string } | null>(null)
+  const flushSlices = useCallback(async () => {
+    window.clearTimeout(saveTimer.current)
+    const pending = pendingSave.current
+    pendingSave.current = null
+    if (pending) await api.saveSlices(pid, pending.slices, pending.label)
+  }, [pid])
   const setSlices = useCallback(
-    (next: Slice[], persist = true) => {
+    (next: Slice[], label: string | null) => {
       const sorted = [...next].sort(byStart)
       slicesRef.current = sorted
       setSlicesState(sorted)
-      if (persist) {
+      if (label) {
+        pendingSave.current = { slices: sorted, label }
         window.clearTimeout(saveTimer.current)
         saveTimer.current = window.setTimeout(() => {
-          api.saveSlices(pid, sorted).catch((e) => setError(`Saving slices failed: ${e.message}`))
+          flushSlices().catch((e) => setError(`Saving slices failed: ${e.message}`))
         }, 400)
       }
     },
-    [pid],
+    [flushSlices],
   )
+
+  // ---------- undo / redo ----------
+
+  const [history, setHistory] = useState<UndoState>({ undo: null, redo: null })
+  useEffect(() => onHistory(setHistory), [])
+
+  const applyProject = (p: Project) => {
+    setProject(p)
+    setSlices(p.slices, null)
+    setSelectedId((id) => (p.slices.some((s) => s.id === id) ? id : null))
+    setExportTracks((cur) => cur.filter((n) => p.tracks.some((t) => t.name === n)))
+    setEditing(null)
+    if (!p.tracks.some((t) => t.name === focusedRef.current)) setFocus('mix')
+  }
+
+  const undoRedo = async (redo: boolean) => {
+    try {
+      await flushSlices() // an edit still waiting to save is the one to undo
+      if (redo) {
+        const r = await api.redo(pid)
+        applyProject(r.project)
+        flash(`Redo: ${r.redone}`)
+      } else {
+        const r = await api.undo(pid)
+        applyProject(r.project)
+        flash(`Undo: ${r.undone}`)
+      }
+    } catch (e) {
+      flash((e as Error).message === 'nothing to undo' || (e as Error).message === 'nothing to redo'
+        ? `Nothing to ${redo ? 'redo' : 'undo'}` : `Undo failed: ${(e as Error).message}`)
+    }
+  }
 
   const autoTempo = async () => {
     try {
@@ -111,7 +154,8 @@ export function ProjectView({ pid, meta, onBack }: Props) {
   useEffect(() => {
     reload()
       .then((p) => {
-        setSlices(p.slices, false)
+        setSlices(p.slices, null)
+        void api.history(pid)
         const stems = p.tracks.filter((t) => t.kind === 'stem')
         const start = stems.find((t) => t.name.includes('drum'))?.name ?? 'mix'
         focusedRef.current = start
@@ -206,11 +250,11 @@ export function ProjectView({ pid, meta, onBack }: Props) {
       },
       onSliceChange: (s: Slice) => {
         const snapped = snapSlice(s)
-        setSlices(slicesRef.current.map((x) => (x.id === s.id ? snapped : x)))
+        setSlices(slicesRef.current.map((x) => (x.id === s.id ? snapped : x)), 'Move slice')
       },
       onSliceCreate: (start: number, end: number) => {
         const s = snapSlice({ id: newId(), start, end })
-        setSlices([...slicesRef.current, s])
+        setSlices([...slicesRef.current, s], 'Draw slice')
         setSelectedId(s.id)
       },
       onSelectSlice: setSelectedId,
@@ -230,14 +274,14 @@ export function ProjectView({ pid, meta, onBack }: Props) {
     const hit = cur.find((s) => s.start < t - 0.005 && s.end > t + 0.005)
     if (hit) {
       const right = { id: newId(), start: t, end: hit.end }
-      setSlices([...cur.filter((s) => s.id !== hit.id), { ...hit, end: t }, right])
+      setSlices([...cur.filter((s) => s.id !== hit.id), { ...hit, end: t }, right], 'Split slice')
       setSelectedId(right.id)
     } else {
       const next = cur.find((s) => s.start > t)
       const end = Math.min(next ? next.start : t + 0.5, project?.duration ?? t + 0.5)
       if (end - t < 0.01) return
       const s = { id: newId(), start: t, end }
-      setSlices([...cur, s])
+      setSlices([...cur, s], 'Add slice')
       setSelectedId(s.id)
     }
   }
@@ -246,7 +290,7 @@ export function ProjectView({ pid, meta, onBack }: Props) {
     if (!selectedId) return
     const cur = slicesRef.current
     const i = cur.findIndex((s) => s.id === selectedId)
-    setSlices(cur.filter((s) => s.id !== selectedId))
+    setSlices(cur.filter((s) => s.id !== selectedId), 'Delete slice')
     setSelectedId(cur[i + 1]?.id ?? cur[i - 1]?.id ?? null)
   }
 
@@ -282,7 +326,13 @@ export function ProjectView({ pid, meta, onBack }: Props) {
     const onKey = (e: KeyboardEvent) => {
       if (editing) return
       const el = e.target as HTMLElement
-      if (el.closest('input, select, textarea, [contenteditable]')) return
+      if (el.closest('input, select, textarea, [contenteditable]')) return // native text undo there
+      const mod = e.metaKey || e.ctrlKey
+      if (mod && !e.altKey && (e.key === 'z' || e.key === 'Z' || e.key === 'y')) {
+        e.preventDefault()
+        void undoRedo(e.key === 'y' || e.shiftKey) // Ctrl+Z / ⌘Z undo · Ctrl+Shift+Z / ⌘⇧Z / Ctrl+Y redo
+        return
+      }
       if (e.metaKey || e.ctrlKey || e.altKey) return
       switch (e.key) {
         case ' ':
@@ -320,9 +370,9 @@ export function ProjectView({ pid, meta, onBack }: Props) {
 
   // ---------- pads ----------
 
-  const setPads = (pads: (string | null)[]) => {
+  const setPads = (pads: (string | null)[], label = 'Edit pads') => {
     setProject((p) => (p ? { ...p, pads } : p))
-    api.savePads(pid, pads).catch((e) => {
+    api.savePads(pid, pads, label).catch((e) => {
       setError(`Saving pads failed: ${e.message}`)
       void reload()
     })
@@ -338,7 +388,7 @@ export function ProjectView({ pid, meta, onBack }: Props) {
       return
     }
     pads[target] = sid
-    setPads(pads)
+    setPads(pads, 'Load pad')
     // Step to the next pad so a run of samples can be loaded in a row.
     setSelectedPad(Math.min(target + 1, pads.length - 1))
   }
@@ -407,6 +457,12 @@ export function ProjectView({ pid, meta, onBack }: Props) {
         />
         <div className="spacer" />
         {notice && <span className="notice">{notice}</span>}
+        <div className="undo-btns">
+          <button onClick={() => void undoRedo(false)} disabled={!history.undo}
+            title={history.undo ? `Undo ${history.undo} (${MOD}Z)` : 'Nothing to undo'}>↶</button>
+          <button onClick={() => void undoRedo(true)} disabled={!history.redo}
+            title={history.redo ? `Redo ${history.redo} (${MOD}⇧Z)` : 'Nothing to redo'}>↷</button>
+        </div>
         <input ref={fileInput} type="file" accept="audio/*" multiple hidden
           onChange={(e) => {
             void importStems(e.target.files)
@@ -559,8 +615,8 @@ export function ProjectView({ pid, meta, onBack }: Props) {
               selectedId={selectedId}
               exportTracks={exportTracks}
               onFocus={setFocus}
-              onSlices={(s) => {
-                setSlices(s)
+              onSlices={(s, label) => {
+                setSlices(s, label)
                 setSelectedId(null)
               }}
               onToggleExport={laneEvents.onToggleExport}

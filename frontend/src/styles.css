@@ -268,3 +268,4 @@ input[type='checkbox'] { accent-color: var(--accent); margin: 0; }
 .alts { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 10px 0; font-size: 12px; }
 .alts button { padding: 3px 8px; }
 .nudge { gap: 6px; } .nudge button { padding: 2px 8px; }
+.undo-btns { display: flex; gap: 4px; } .undo-btns button { padding: 4px 9px; font-size: 14px; }

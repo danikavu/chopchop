@@ -25,7 +25,7 @@ interface Props {
   projectName: string
   selectedPad: number | null
   onSelectPad: (i: number | null) => void
-  onPadsChange: (pads: (string | null)[]) => void
+  onPadsChange: (pads: (string | null)[], label?: string) => void
   onKitBuilt: () => Promise<void>
 }
 
@@ -88,7 +88,7 @@ export function DrumPads(p: Props) {
   const setPad = (i: number, sid: string | null) => {
     const next = [...p.pads]
     next[i] = sid
-    p.onPadsChange(next)
+    p.onPadsChange(next, sid ? 'Load pad' : 'Clear pad')
   }
 
   const onDrop = (i: number, e: React.DragEvent) => {
@@ -104,7 +104,7 @@ export function DrumPads(p: Props) {
       if (j === i) return
       const next = [...p.pads]
       ;[next[i], next[j]] = [next[j], next[i]] // swap, like moving pads on an MPC
-      p.onPadsChange(next)
+      p.onPadsChange(next, 'Swap pads')
       p.onSelectPad(i)
     }
   }
@@ -169,7 +169,7 @@ export function DrumPads(p: Props) {
           onClick={() => {
             const next = [...p.pads]
             next.fill(null, bank * PADS_PER_BANK, (bank + 1) * PADS_PER_BANK)
-            p.onPadsChange(next)
+            p.onPadsChange(next, `Clear bank ${BANKS[bank]}`)
           }}
           disabled={bankCount(bank) === 0}
         >
