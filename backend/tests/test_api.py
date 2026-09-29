@@ -159,3 +159,25 @@ def test_bulk_delete_samples(client):
     p = client.get(f"/api/projects/{pid}").json()
     assert [s["id"] for s in p["samples"]] == ids[2:]
     assert set(filter(None, p["pads"])) == {ids[2]}
+
+
+def test_ui_served_with_js_mime_even_if_os_registry_is_wrong(tmp_path, monkeypatch):
+    # Many Windows machines register .js as text/plain; Python's mimetypes reads the
+    # registry, and browsers refuse module scripts served as text/plain (blank page).
+    import mimetypes
+
+    import chopper.app as app_module
+
+    dist = tmp_path / "dist"
+    (dist / "assets").mkdir(parents=True)
+    (dist / "index.html").write_text("<script type=module src=/assets/app.js></script>")
+    (dist / "assets" / "app.js").write_text("console.log(1)")
+    (dist / "assets" / "app.css").write_text("body{}")
+    monkeypatch.setattr(app_module, "FRONTEND_DIST", dist)
+    mimetypes.add_type("text/plain", ".js")
+    mimetypes.add_type("text/plain", ".css")
+
+    client = TestClient(app_module.create_app(Store(tmp_path / "data")))
+    assert "javascript" in client.get("/assets/app.js").headers["content-type"]
+    assert client.get("/assets/app.css").headers["content-type"].startswith("text/css")
+    assert client.get("/").headers["content-type"].startswith("text/html")
