@@ -16,28 +16,71 @@ import numpy as np
 
 from .store import data_dir
 
+# SDR figures (dB, higher = cleaner) are audio-separator's published scores.
 MODELS = [
     {
         "id": "htdemucs_6s.yaml",
         "label": "Demucs 6-stem",
+        "group": "Multi-stem",
         "stems": ["vocals", "drums", "bass", "guitar", "piano", "other"],
+        "note": "the only model with guitar and piano",
         "default": True,
     },
     {
         "id": "htdemucs_ft.yaml",
-        "label": "Demucs 4-stem fine-tuned (best, slow)",
+        "label": "Demucs 4-stem fine-tuned",
+        "group": "Multi-stem",
         "stems": ["vocals", "drums", "bass", "other"],
+        "note": "best drums (10.0 dB) · slow",
+        "best_for": ["drums"],
         "bag": 4,  # averages 4 models, each run separately
     },
     {
-        "id": "htdemucs.yaml",
-        "label": "Demucs 4-stem (fast)",
+        "id": "hdemucs_mmi.yaml",
+        "label": "Demucs MMI",
+        "group": "Multi-stem",
         "stems": ["vocals", "drums", "bass", "other"],
+        "note": "best bass (12.2 dB)",
+        "best_for": ["bass"],
+    },
+    {
+        "id": "htdemucs.yaml",
+        "label": "Demucs 4-stem",
+        "group": "Multi-stem",
+        "stems": ["vocals", "drums", "bass", "other"],
+        "note": "fastest",
+    },
+    {
+        "id": "vocals_mel_band_roformer.ckpt",
+        "label": "Mel-Band Roformer",
+        "group": "Vocals / instrumental",
+        "stems": ["vocals", "instrumental"],
+        "aliases": {"other": "instrumental"},  # the model calls the backing track "other"
+        "note": "best vocals (12.6 dB) · slow",
+        "best_for": ["vocals"],
     },
     {
         "id": "model_bs_roformer_ep_317_sdr_12.9755.ckpt",
-        "label": "BS-Roformer vocals / instrumental",
+        "label": "BS-Roformer",
+        "group": "Vocals / instrumental",
         "stems": ["vocals", "instrumental"],
+        "note": "vocals 11.8 dB, instrumental 16.5 dB",
+    },
+    {
+        "id": "Kim_Vocal_2.onnx",
+        "label": "MDX-Net Kim Vocal 2",
+        "group": "Vocals / instrumental",
+        "stems": ["vocals", "instrumental"],
+        "note": "classic UVR vocal model (10.2 dB) · fast",
+        "passes": 2,
+    },
+    {
+        "id": "UVR-MDX-NET-Inst_HQ_4.onnx",
+        "label": "MDX-Net Inst HQ 4",
+        "group": "Vocals / instrumental",
+        "stems": ["vocals", "instrumental"],
+        "note": "cleanest MDX instrumental (15.5 dB) · fast",
+        "passes": 2,
     },
 ]
 
@@ -134,6 +177,8 @@ class _ProgressCapture:
     def _report(self, bar) -> None:
         total = bar.total or 0
         if getattr(bar, "unit", "") == "iB":  # model download
+            if total and total < 1_000_000:
+                return  # a small config file; not worth a message
             frac = bar.n / total if total else 0.0
             mb = f"{bar.n / 1e6:.0f}/{total / 1e6:.0f} MB" if total else f"{bar.n / 1e6:.0f} MB"
             self.emit(DOWNLOAD[0] + (DOWNLOAD[1] - DOWNLOAD[0]) * frac, f"Downloading model · {mb}")
@@ -248,8 +293,8 @@ def separate(src: Path, out_dir: Path, model: str, on_progress: Progress | None 
         with gpu_fix, _ProgressCapture(emit, device) as cap:
             sep.load_model(model_filename=model)
             cap.emit(SEPARATE[0], f"Model loaded · separating on {device}…")
-            if is_demucs:
-                cap.passes = _demucs_passes(sep, model)
+            info = next(m for m in MODELS if m["id"] == model)
+            cap.passes = _demucs_passes(sep, model) if is_demucs else info.get("passes", 1)
             files = sep.separate(str(src))
         emit(SEPARATE[1], "Writing stems…")
         return files
@@ -265,12 +310,14 @@ def separate(src: Path, out_dir: Path, model: str, on_progress: Progress | None 
             emit(0.02, "GPU failed, retrying on CPU…")
             files = run(force_cpu=True)
 
+    aliases = next(m for m in MODELS if m["id"] == model).get("aliases", {})
     stems: dict[str, Path] = {}
     for f in files:
         p = Path(f)
         if not p.is_absolute():
             p = out_dir / p
-        stems[stem_name(p.name)] = p
+        name = stem_name(p.name)
+        stems[aliases.get(name, name)] = p
     if not stems:
         raise RuntimeError("separation produced no stems")
     return stems

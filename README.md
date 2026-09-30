@@ -61,6 +61,22 @@ lighter engine without PyTorch. You can then import stems you already have (e.g.
    **Separate stems**.
    - **All stems** is the default; Demucs 6-stem gives vocals, drums, bass, guitar,
      piano and other.
+   - **Models**, with audio-separator's published quality scores (SDR, higher is cleaner).
+     When you keep only one kind of stem, the panel suggests the best model for it.
+
+     | Model | Stems | Best for |
+     |---|---|---|
+     | Demucs 6-stem (default) | vocals, drums, bass, guitar, piano, other | the only one with guitar/piano |
+     | Demucs 4-stem fine-tuned | vocals, drums, bass, other | **drums** (10.0 dB); slow |
+     | Demucs MMI | vocals, drums, bass, other | **bass** (12.2 dB) |
+     | Demucs 4-stem | vocals, drums, bass, other | speed |
+     | Mel-Band Roformer | vocals, instrumental | **vocals** (12.6 dB); slow |
+     | BS-Roformer | vocals, instrumental | instrumental (16.5 dB) |
+     | MDX-Net Kim Vocal 2 | vocals, instrumental | the classic UVR vocal model (10.2 dB); fast |
+     | MDX-Net Inst HQ 4 | vocals, instrumental | a clean instrumental (15.5 dB); fast |
+
+     The bass-*specialist* models audio-separator offers (kuielab bass, 10.4 dB) score
+     lower than Demucs, so they aren't included.
    - **Presets:** **Vocals + instrumental** and **Drums + rest**, or tick any combination.
    - **The stems you leave out** can be mixed into one extra track: `instrumental` when
      only vocals are kept, `no_drums` when only drums are, `rest` otherwise. Or drop them.

@@ -85,6 +85,9 @@ export interface Model {
   id: string
   label: string
   stems: string[]
+  group?: string
+  note?: string
+  best_for?: string[]
   default?: boolean
 }
 

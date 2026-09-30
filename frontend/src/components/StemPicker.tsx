@@ -16,8 +16,6 @@ interface Props {
   onCancel?: () => void
 }
 
-const ROFORMER = 'model_bs_roformer_ep_317_sdr_12.9755.ckpt'
-
 /** Mirrors the backend's name for the track the unselected stems are mixed into. */
 function restName(keep: string[]) {
   if (keep.length === 1 && keep[0] === 'vocals') return 'instrumental'
@@ -28,7 +26,9 @@ function restName(keep: string[]) {
 /** Choose the separation model and which stems end up in the project. */
 export function StemPicker({ meta, hasStems, onStart, onCancel }: Props) {
   const [model, setModel] = useState(() => meta.models.find((m) => m.default)?.id ?? meta.models[0]?.id ?? '')
-  const stems = useMemo(() => meta.models.find((m) => m.id === model)?.stems ?? [], [meta.models, model])
+  const current = meta.models.find((m) => m.id === model)
+  const stems = useMemo(() => current?.stems ?? [], [current])
+  const groups = [...new Set(meta.models.map((m) => m.group ?? 'Models'))]
   const [picked, setPicked] = useState<string[]>(stems)
   const [rest, setRest] = useState(true)
   const [replace, setReplace] = useState(true)
@@ -42,6 +42,11 @@ export function StemPicker({ meta, hasStems, onStart, onCancel }: Props) {
     ...(stems.includes('drums') ? [{ name: 'Drums + rest', stems: ['drums'] }] : []),
   ]
   const same = (a: string[], b: string[]) => a.length === b.length && a.every((x) => b.includes(x))
+  // A model that's the best at every stem you kept (e.g. only vocals → Mel-Band Roformer).
+  const better =
+    !all && keep.length
+      ? meta.models.find((m) => m.id !== model && keep.every((s) => m.best_for?.includes(s)))
+      : undefined
 
   const pickModel = (id: string) => {
     setModel(id)
@@ -54,10 +59,14 @@ export function StemPicker({ meta, hasStems, onStart, onCancel }: Props) {
       <label className="field">
         <span>Model</span>
         <select value={model} onChange={(e) => pickModel(e.target.value)}>
-          {meta.models.map((m) => (
-            <option key={m.id} value={m.id}>
-              {m.label} — {m.stems.join(', ')}
-            </option>
+          {groups.map((g) => (
+            <optgroup key={g} label={g}>
+              {meta.models.filter((m) => (m.group ?? 'Models') === g).map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.label}{m.note ? ` — ${m.note}` : ''}
+                </option>
+              ))}
+            </optgroup>
           ))}
         </select>
       </label>
@@ -95,10 +104,14 @@ export function StemPicker({ meta, hasStems, onStart, onCancel }: Props) {
           Replace the current stems (undo brings them back)
         </label>
       )}
-      {same(keep, ['vocals']) && model !== ROFORMER && meta.models.some((m) => m.id === ROFORMER) && (
+      {better && (
         <div className="tip">
-          Tip: BS-Roformer is built for vocal / instrumental splits and is usually cleaner.{' '}
-          <button className="link" onClick={() => pickModel(ROFORMER)}>Use it</button>
+          Tip: <b>{better.label}</b> is the strongest model for {keep.map(label).join(' + ')} — {better.note}.{' '}
+          <button className="link" onClick={() => {
+            const want = keep
+            pickModel(better.id)
+            setPicked(want.filter((s) => better.stems.includes(s)))
+          }}>Use it</button>
         </div>
       )}
 
