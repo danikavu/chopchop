@@ -32,6 +32,21 @@ export interface Sample {
   created_at: number
 }
 
+export interface Tempo {
+  bpm: number | null
+  confidence: number
+  components: Partial<Record<'clarity' | 'stability' | 'on_grid' | 'timing' | 'octave', number>>
+  range: [number, number] | null
+  steady: boolean | null
+  alternatives: { bpm: number; relation: string; strength: number }[]
+  beats: number[]
+  downbeat?: number
+  swing: { percent: number | null; grid: '8th' | '16th' | null }
+  track?: string
+  source?: 'detected' | 'manual'
+  detected_bpm?: number | null
+}
+
 export interface Project {
   id: string
   name: string
@@ -42,6 +57,7 @@ export interface Project {
   slices: Slice[]
   samples: Sample[]
   pads: (string | null)[]
+  tempo: Tempo | null
 }
 
 export interface ProjectSummary {
@@ -61,6 +77,8 @@ export interface Job {
   message: string
   result: unknown
   error: string | null
+  started_at: number | null
+  finished_at: number | null
 }
 
 export interface Model {
@@ -76,6 +94,7 @@ export interface Meta {
   keys: string[]
   notes: string[]
   separation: { available: boolean; reason: string | null }
+  device: { device: 'cuda' | 'mps' | 'directml' | 'cpu'; name: string; hint: string | null } | null
   models: Model[]
 }
 

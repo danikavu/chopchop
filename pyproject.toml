@@ -18,7 +18,10 @@ dependencies = [
 
 [project.optional-dependencies]
 # Stem separation (UVR models via audio-separator). Pulls in PyTorch.
-separation = ["audio-separator[cpu]>=0.30"]
+# scripts/run.py install picks the right one (and a CUDA build of PyTorch for NVIDIA).
+separation = ["audio-separator[cpu]>=0.30"]      # CPU, and Apple Silicon GPU (Metal)
+separation-cuda = ["audio-separator[gpu]>=0.30"]  # NVIDIA GPUs
+separation-directml = ["audio-separator[dml]>=0.30"]  # AMD / Intel GPUs on Windows (experimental)
 dev = ["pytest>=8", "httpx>=0.27"]
 
 [project.scripts]

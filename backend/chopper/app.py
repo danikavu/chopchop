@@ -3,17 +3,19 @@
 from __future__ import annotations
 
 import mimetypes
+import re
 import shutil
 import tempfile
 from dataclasses import asdict
 from pathlib import Path
+from urllib.parse import quote
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import analysis, audio, kits, separation, slicing
+from . import analysis, audio, kits, separation, slicing, tempo
 from .jobs import Job, JobRunner
 from .store import PAD_SLOTS, ProjectNotFound, Store, find_sample, find_track, new_id, safe_name
 
@@ -38,6 +40,7 @@ class Slice(BaseModel):
 
 class SlicesReq(BaseModel):
     slices: list[Slice]
+    label: str | None = Field(None, max_length=60)  # undo step name, e.g. "Split slice"
 
 
 class ExportSlicesReq(BaseModel):
@@ -46,10 +49,15 @@ class ExportSlicesReq(BaseModel):
     fade_in_ms: float = Field(2, ge=0, le=500)
     fade_out_ms: float = Field(8, ge=0, le=2000)
     normalize: bool = False
+    key_names: bool = True  # detect each slice's key/note and put it in the file name
+    bpm_names: bool = True  # tag slices ≥ ~1 beat with the project tempo
 
 
 class SeparateReq(BaseModel):
     model: str = "htdemucs_6s.yaml"
+    stems: list[str] | None = None  # which stems to keep; None = all the model makes
+    rest: bool = True  # mix the stems not kept into one extra track (e.g. "instrumental")
+    replace: bool = True  # remove the project's current stems first
 
 
 class KitReq(BaseModel):
@@ -65,6 +73,7 @@ class KitReq(BaseModel):
 
 class PadsReq(BaseModel):
     pads: list[str | None]
+    label: str | None = Field(None, max_length=60)
 
 
 class SampleCreateReq(BaseModel):
@@ -88,6 +97,15 @@ class DeleteSamplesReq(BaseModel):
     ids: list[str]
 
 
+class TempoDetectReq(BaseModel):
+    track: str | None = None  # default: the drum stem, else the mix
+
+
+class TempoSetReq(BaseModel):
+    bpm: float | None = Field(None, gt=20, lt=400)
+    downbeat: int | None = Field(None, ge=0, le=3)  # which beat starts the bar
+
+
 class ExportKitReq(BaseModel):
     sample_ids: list[str] | None = None
     kit_name: str = "kit"
@@ -99,6 +117,18 @@ def create_app(store: Store | None = None) -> FastAPI:
     store = store or Store()
     jobs = JobRunner()
     app = FastAPI(title="Chopper")
+
+    @app.middleware("http")
+    async def undo_headers(request, call_next):
+        """Every project response says what Undo / Redo would do next, so the UI's
+        buttons stay current without extra requests."""
+        response = await call_next(request)
+        m = re.match(r"/api/projects/([a-f0-9]{10})(/|$)", request.url.path)
+        if m and response.status_code < 500:
+            h = store.history(m.group(1))
+            response.headers["X-Chopper-Undo"] = quote(h["undo"] or "")
+            response.headers["X-Chopper-Redo"] = quote(h["redo"] or "")
+        return response
 
     @app.exception_handler(ProjectNotFound)
     async def _nf(_req, exc):
@@ -119,13 +149,15 @@ def create_app(store: Store | None = None) -> FastAPI:
         except KeyError as e:
             raise HTTPException(404, str(e))
 
-    def add_track(pid: str, name: str, kind: str, src: Path) -> dict:
+    def add_track(pid: str, name: str, kind: str, src: Path, label: str | None = None) -> dict:
         folder = store.path(pid)
         fname = safe_name(name)
-        rel = f"tracks/{fname}.wav"
+        # A fresh file per import: re-importing a stem must not overwrite audio that
+        # an undo step still points to.
+        rel = f"tracks/{fname}-{new_id()[:6]}.wav"
         meta = audio.import_audio(src, folder / rel)
         track = {"name": fname, "kind": kind, "file": rel, **meta}
-        with store.edit(pid) as p:
+        with store.edit(pid, label) as p:
             p["tracks"] = [t for t in p["tracks"] if t["name"] != fname] + [track]
             if kind == "mix":
                 p["duration"] = meta["duration"]
@@ -151,6 +183,7 @@ def create_app(store: Store | None = None) -> FastAPI:
             "keys": analysis.KEYS,
             "notes": analysis.NOTE_NAMES,
             "separation": separation.status(),
+            "device": separation.device_info() if separation.status()["available"] else None,
             "models": separation.MODELS,
         }
 
@@ -179,7 +212,7 @@ def create_app(store: Store | None = None) -> FastAPI:
 
     @app.patch("/api/projects/{pid}")
     def rename_project(pid: str, body: dict):
-        with store.edit(pid) as p:
+        with store.edit(pid, "Rename project") as p:
             if "name" in body and str(body["name"]).strip():
                 p["name"] = str(body["name"]).strip()
         return store.get(pid)
@@ -188,6 +221,29 @@ def create_app(store: Store | None = None) -> FastAPI:
     def delete_project(pid: str):
         store.delete(pid)
         return {"ok": True}
+
+    # ---------- undo / redo ----------
+
+    @app.get("/api/projects/{pid}/history")
+    def history(pid: str):
+        get_project(pid)
+        return store.history(pid)
+
+    @app.post("/api/projects/{pid}/undo")
+    def undo(pid: str):
+        get_project(pid)
+        step = store.undo(pid)
+        if step is None:
+            raise HTTPException(409, "nothing to undo")
+        return {"undone": step[0], "project": step[1]}
+
+    @app.post("/api/projects/{pid}/redo")
+    def redo(pid: str):
+        get_project(pid)
+        step = store.redo(pid)
+        if step is None:
+            raise HTTPException(409, "nothing to redo")
+        return {"redone": step[0], "project": step[1]}
 
     @app.get("/api/projects/{pid}/jobs")
     def project_jobs(pid: str):
@@ -203,7 +259,7 @@ def create_app(store: Store | None = None) -> FastAPI:
         if safe_name(stem) == "mix":
             stem = "mix_2"
         try:
-            return add_track(pid, stem, "stem", tmp)
+            return add_track(pid, stem, "stem", tmp, f"Import stem {safe_name(stem)}")
         except Exception as e:
             raise HTTPException(400, f"could not read audio: {e}")
         finally:
@@ -211,13 +267,12 @@ def create_app(store: Store | None = None) -> FastAPI:
 
     @app.delete("/api/projects/{pid}/tracks/{name}")
     def delete_track(pid: str, name: str):
-        with store.edit(pid) as p:
+        with store.edit(pid, f"Remove stem {name}") as p:
             t = track_or_404(p, name)
             if t["kind"] == "mix":
                 raise HTTPException(400, "cannot delete the original mix")
             p["tracks"].remove(t)
-        (store.path(pid) / t["file"]).unlink(missing_ok=True)
-        return {"ok": True}
+        return {"ok": True}  # the file stays until no undo step needs it
 
     @app.get("/api/projects/{pid}/tracks/{name}/audio")
     def track_audio(pid: str, name: str):
@@ -248,18 +303,78 @@ def create_app(store: Store | None = None) -> FastAPI:
             raise HTTPException(400, st["reason"])
         mix = next(t for t in p["tracks"] if t["kind"] == "mix")
         folder = store.path(pid)
+        model = next((m for m in separation.MODELS if m["id"] == req.model), None)
+        if model is None:
+            raise HTTPException(400, f"unknown model: {req.model}")
+        keep = [x for x in model["stems"] if req.stems is None or x in req.stems]
+        unknown = set(req.stems or []) - set(model["stems"])
+        if unknown:
+            raise HTTPException(400, f"{model['label']} doesn't make: {', '.join(sorted(unknown))}")
+        if not keep:
+            raise HTTPException(400, "pick at least one stem")
 
         def work(job: Job):
             out = folder / "separation" / new_id()
             try:
                 stems = separation.separate(folder / mix["file"], out, req.model, job.update)
-                job.update(0.9, "Importing stems…")
-                added = [add_track(pid, name, "stem", path)["name"] for name, path in stems.items()]
+                if set(keep) < set(stems):
+                    dropped = [n for n in stems if n not in keep]
+                    job.update(0.89, f"Mixing {', '.join(dropped)} into {separation.rest_name(keep)}…"
+                               if req.rest else f"Keeping {', '.join(keep)}…")
+                stems = separation.combine(stems, keep, req.rest, out)
+                # Lanes in the model's usual order (vocals, drums, bass, …), remainder last.
+                order = model["stems"]
+                stems = dict(sorted(stems.items(), key=lambda kv: order.index(kv[0]) if kv[0] in order else 99))
+                added = []
+                with store.undo_group(pid, "Separate stems"):
+                    if req.replace:
+                        with store.edit(pid) as proj:
+                            proj["tracks"] = [t for t in proj["tracks"] if t["kind"] != "stem"]
+                    for i, (name, path) in enumerate(stems.items()):
+                        job.update(0.9 + 0.1 * i / len(stems), f"Importing stem {i + 1}/{len(stems)}: {name}")
+                        added.append(add_track(pid, name, "stem", path)["name"])
+                    if any(analysis.is_drum_track(n) for n in added):
+                        job.update(0.99, "Estimating tempo from the drums…")
+                        detect_tempo(pid, None)
             finally:
                 shutil.rmtree(out, ignore_errors=True)
             return {"tracks": added}
 
         return asdict(jobs.submit("separate", pid, work))
+
+    # ---------- tempo ----------
+
+    def detect_tempo(pid: str, track_name: str | None) -> dict:
+        p = get_project(pid)
+        if track_name:
+            t = track_or_404(p, track_name)
+        else:
+            t = next((x for x in p["tracks"] if analysis.is_drum_track(x["name"])), None) or \
+                next(x for x in p["tracks"] if x["kind"] == "mix")
+        y, sr = audio.read_mono(store.path(pid) / t["file"], sr=None)
+        result = {**tempo.estimate(y, sr), "track": t["name"], "source": "detected"}
+        result["detected_bpm"] = result["bpm"]
+        with store.edit(pid, "Detect tempo") as proj:
+            proj["tempo"] = result
+        return result
+
+    @app.post("/api/projects/{pid}/tempo")
+    def post_tempo(pid: str, req: TempoDetectReq):
+        return detect_tempo(pid, req.track)
+
+    @app.put("/api/projects/{pid}/tempo")
+    def put_tempo(pid: str, req: TempoSetReq):
+        """Set the tempo by hand (typed, tapped, x2 / ÷2, or an alternative)."""
+        with store.edit(pid, "Change downbeat" if req.bpm is None else "Change tempo") as p:
+            base = p.get("tempo") or {"bpm": req.bpm, "beats": [], "alternatives": [], "range": None}
+            if req.bpm is not None:
+                base = tempo.rescale(base, req.bpm)
+            if req.downbeat is not None:
+                base = {**base, "downbeat": req.downbeat}
+            if base.get("bpm") is None:
+                raise HTTPException(400, "set a bpm first")
+            p["tempo"] = base
+            return p["tempo"]
 
     @app.get("/api/jobs/{jid}")
     def job(jid: str):
@@ -277,7 +392,7 @@ def create_app(store: Store | None = None) -> FastAPI:
         y, sr = audio.read_mono(store.path(pid) / t["file"], sr=None)
         onsets = slicing.detect_onsets(y, sr, req.sensitivity, req.min_gap, req.gate_db)
         slices = slicing.slices_from_onsets(onsets, t["duration"], req.max_len)
-        with store.edit(pid) as p:
+        with store.edit(pid, "Detect slices") as p:
             p["slices"] = slices
         return {"slices": slices}
 
@@ -288,7 +403,7 @@ def create_app(store: Store | None = None) -> FastAPI:
              for s in req.slices if s.end > s.start),
             key=lambda s: s["start"],
         )
-        with store.edit(pid) as p:
+        with store.edit(pid, req.label or "Edit slices") as p:
             p["slices"] = slices
         return {"slices": slices}
 
@@ -300,16 +415,23 @@ def create_app(store: Store | None = None) -> FastAPI:
         if req.slice_ids is not None:
             wanted = set(req.slice_ids)
             slices = [s for s in slices if s["id"] in wanted]
-        try:
-            path = slicing.export_slices(store.path(pid), tracks, slices, req.fade_in_ms, req.fade_out_ms, req.normalize)
-        except ValueError as e:
-            raise HTTPException(400, str(e))
-        return {
-            "file": path.name,
-            "path": str(path),
-            "url": f"/api/projects/{pid}/exports/{path.name}",
-            "count": len(slices) * len(tracks),
-        }
+        if not slices:
+            raise HTTPException(400, "no slices to export")
+        if not tracks:
+            raise HTTPException(400, "no tracks selected")
+        bpm = (p.get("tempo") or {}).get("bpm") if req.bpm_names else None
+
+        def work(job: Job):
+            path = slicing.export_slices(store.path(pid), tracks, slices, req.fade_in_ms, req.fade_out_ms,
+                                         req.normalize, bpm=bpm, keys=req.key_names, progress=job.update)
+            return {
+                "file": path.name,
+                "path": str(path),
+                "url": f"/api/projects/{pid}/exports/{path.name}",
+                "count": len(slices) * len(tracks),
+            }
+
+        return asdict(jobs.submit("export:slices", pid, work))
 
     @app.get("/api/projects/{pid}/exports/{fname}")
     def download_export(pid: str, fname: str):
@@ -332,11 +454,10 @@ def create_app(store: Store | None = None) -> FastAPI:
             recs = kits.extract(folder, t, req.mode, req.sensitivity, req.similarity,
                                 req.max_per_category, kit_size=req.kit_size, progress=job.update)
             job.update(0.96, f"Saving {len(recs)} samples…")
-            with store.edit(pid) as proj:
+            step = "Build drum kit" if req.mode == "drums" else "Extract sound bits"
+            with store.edit(pid, f"{step} from {t['name']}") as proj:
                 if req.replace:
                     old = [s for s in proj["samples"] if s.get("track") == t["name"] and s.get("origin") == req.mode]
-                    for s in old:
-                        (folder / s["file"]).unlink(missing_ok=True)
                     gone = {s["id"] for s in old}
                     proj["samples"] = [s for s in proj["samples"] if s["id"] not in gone]
                     proj["pads"] = [None if p in gone else p for p in proj["pads"]]
@@ -360,13 +481,15 @@ def create_app(store: Store | None = None) -> FastAPI:
         rec = kits.analyse_region(folder, t, req.start, end, req.category)
         rec.update({"track": t["name"], "start": round(req.start, 4), "end": round(end, 4),
                     "origin": "manual", "score": None, "name": req.name})
-        with store.edit(pid) as proj:
+        with store.edit(pid, "Save sample") as proj:
             return kits.save_sample(folder, proj, t, rec)
 
     @app.patch("/api/projects/{pid}/samples/{sid}")
     def update_sample(pid: str, sid: str, req: SampleUpdateReq):
         folder = store.path(pid)
-        with store.edit(pid) as p:
+        what = "Trim" if req.start is not None or req.end is not None else \
+            "Rename" if req.name else "Recategorize" if req.category else "Set key of"
+        with store.edit(pid, f"{what} sample") as p:
             s = sample_or_404(p, sid)
             if req.name is not None and req.name.strip():
                 s["name"] = req.name.strip()
@@ -384,6 +507,8 @@ def create_app(store: Store | None = None) -> FastAPI:
                 if end - start < 0.005:
                     raise HTTPException(400, "region too short")
                 y, sr = audio.cut(folder / t["file"], start, end)
+                # New file, so undo can bring back the untrimmed audio.
+                s["file"] = f"samples/{s['id']}-{new_id()[:6]}.wav"
                 audio.write_wav(folder / s["file"], y, sr)
                 s.update(start=round(start, 4), end=round(end, 4), duration=round(y.shape[1] / sr, 4))
             return s
@@ -395,7 +520,7 @@ def create_app(store: Store | None = None) -> FastAPI:
         s = sample_or_404(p, sid)
         t = track_or_404(p, s["track"])
         rec = kits.analyse_region(folder, t, s["start"], s["end"], s["category"] if keep_category else None)
-        with store.edit(pid) as p:
+        with store.edit(pid, "Re-detect key") as p:
             s = sample_or_404(p, sid)
             s.update(rec)
             return s
@@ -404,7 +529,7 @@ def create_app(store: Store | None = None) -> FastAPI:
     def put_pads(pid: str, req: PadsReq):
         if len(req.pads) != PAD_SLOTS:
             raise HTTPException(400, f"expected {PAD_SLOTS} pads")
-        with store.edit(pid) as p:
+        with store.edit(pid, req.label or "Edit pads") as p:
             ids = {s["id"] for s in p["samples"]}
             unknown = [x for x in req.pads if x is not None and x not in ids]
             if unknown:
@@ -414,23 +539,20 @@ def create_app(store: Store | None = None) -> FastAPI:
 
     @app.delete("/api/projects/{pid}/samples/{sid}")
     def delete_sample(pid: str, sid: str):
-        with store.edit(pid) as p:
+        with store.edit(pid, "Delete sample") as p:
             s = sample_or_404(p, sid)
             p["samples"].remove(s)
             p["pads"] = [None if x == sid else x for x in p["pads"]]
-        (store.path(pid) / s["file"]).unlink(missing_ok=True)
         return {"ok": True}
 
     @app.post("/api/projects/{pid}/samples/delete")
     def delete_samples(pid: str, req: DeleteSamplesReq):
         """Bulk delete; also empties any pads the samples were on."""
         ids = set(req.ids)
-        with store.edit(pid) as p:
+        with store.edit(pid, f"Delete {len(ids)} samples") as p:
             gone = [s for s in p["samples"] if s["id"] in ids]
             p["samples"] = [s for s in p["samples"] if s["id"] not in ids]
             p["pads"] = [None if x in ids else x for x in p["pads"]]
-        for s in gone:
-            (store.path(pid) / s["file"]).unlink(missing_ok=True)
         return {"deleted": len(gone)}
 
     @app.get("/api/projects/{pid}/samples/{sid}/audio")
@@ -461,7 +583,8 @@ def create_app(store: Store | None = None) -> FastAPI:
             wanted = set(req.sample_ids)
             samples = [s for s in samples if s["id"] in wanted]
         try:
-            path = kits.export_kit(store.path(pid), p, samples, req.kit_name or p["name"], req.normalize, labels)
+            bpm = (p.get("tempo") or {}).get("bpm")
+            path = kits.export_kit(store.path(pid), p, samples, req.kit_name or p["name"], req.normalize, labels, bpm)
         except ValueError as e:
             raise HTTPException(400, str(e))
         return {

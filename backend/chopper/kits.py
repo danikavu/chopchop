@@ -11,6 +11,7 @@ import librosa
 import numpy as np
 
 from . import analysis, audio
+from .naming import export_name
 from .slicing import detect_onsets
 from .store import new_id, safe_name
 
@@ -188,6 +189,9 @@ def extract(
 
     ref_peak = float(np.max(np.abs(y))) + 1e-12
     default_cat = analysis.category_for_track(track["name"])
+    # Drum labels only make sense on a drum track; anything else (vocals, bass, the
+    # full mix…) is labelled, and named, by its general category.
+    drum_labels = mode == "drums" and analysis.is_drum_track(track["name"])
     cands = []
     for i, (a, b) in enumerate(regions):
         if i % 10 == 0:
@@ -201,7 +205,7 @@ def extract(
         if 20 * np.log10(np.max(np.abs(seg)) / ref_peak + 1e-12) < -30:
             continue
         f = analysis.features(seg, sr, pre=y[max(0, a - int(0.04 * sr)):a])
-        if mode == "drums":
+        if drum_labels:
             cat, conf = analysis.classify_drum(f)
         else:
             cat, conf = default_cat, 0.5
@@ -304,11 +308,10 @@ def analyse_region(project_dir: Path, track: dict, start: float, end: float, cat
         raise ValueError("empty region")
     f = analysis.features(y, sr)
     if category is None:
-        default = analysis.category_for_track(track["name"])
-        if "drum" in track["name"].lower() or ((end - start) < 0.6 and default in ("other", "melodic")):
+        if analysis.is_drum_track(track["name"]):
             category, conf = analysis.classify_drum(f)
         else:
-            category, conf = default, 0.5
+            category, conf = analysis.category_for_track(track["name"]), 0.5
     else:
         conf = 1.0
     y22 = librosa.resample(y, orig_sr=sr, target_sr=audio.ANALYSIS_SR)
@@ -332,8 +335,10 @@ def export_kit(
     kit_name: str,
     norm: bool = False,
     pad_labels: dict[str, str] | None = None,
+    bpm: float | None = None,
 ) -> Path:
-    """Zip samples into <kit>/<category>/<name>[_<key>].wav.
+    """Zip samples into <kit>/<category>/<name>[_<bpm>bpm][_<key>].wav (BPM only on
+    sounds at least ~a beat long, i.e. loops and phrases, not one-shots).
 
     pad_labels: {sample id: 'A01'} exports a pad kit instead: a flat folder of
     <kit>/A01_<name>[_<key>].wav, in pad order.
@@ -348,11 +353,11 @@ def export_kit(
             y, sr = audio.read(project_dir / s["file"])
             if norm:
                 y = audio.normalize(y)
-            key = f"_{s['key'].replace(' ', '')}" if s.get("key") else ""
+            name = export_name(safe_name(s["name"]), bpm, s.get("duration") or y.shape[1] / sr, s.get("key"))
             if pad_labels:
-                base = f"{kit}/{pad_labels[s['id']]}_{safe_name(s['name'])}{key}"
+                base = f"{kit}/{pad_labels[s['id']]}_{name}"
             else:
-                base = f"{kit}/{safe_name(s['category'])}/{safe_name(s['name'])}{key}"
+                base = f"{kit}/{safe_name(s['category'])}/{name}"
             path, n = f"{base}.wav", 2
             while path in used:
                 path, n = f"{base}_{n}.wav", n + 1

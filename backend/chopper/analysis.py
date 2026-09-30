@@ -9,8 +9,11 @@ import numpy as np
 from scipy.signal import find_peaks
 
 DRUM_CATEGORIES = ["kick", "snare", "clap", "hihat", "open_hat", "cymbal", "tom", "perc"]
-MELODIC_CATEGORIES = ["vocal", "bass", "keys", "guitar", "synth", "melodic", "fx", "other"]
+MELODIC_CATEGORIES = ["vocal", "bass", "keys", "guitar", "synth", "melodic", "fx", "mix", "other"]
 CATEGORIES = DRUM_CATEGORIES + MELODIC_CATEGORIES
+
+# Longest cut from a drum track that still counts as a single hit (for key naming).
+DRUM_ONE_SHOT_MAX_S = 1.0
 
 # Drum hits that don't usefully carry a pitch label.
 UNPITCHED = {"snare", "clap", "hihat", "open_hat", "cymbal"}
@@ -136,13 +139,19 @@ def classify_drum(f: dict) -> tuple[str, float]:
     return "perc", 0.4
 
 
+def is_drum_track(track_name: str) -> bool:
+    """Only drum stems get per-hit drum labels (kick, snare, hat…)."""
+    name = track_name.lower()
+    return "drum" in name or "perc" in name
+
+
 def category_for_track(track_name: str) -> str:
-    """Default category for sound bits cut from a non-drum stem."""
+    """General category for everything cut from a non-drum track (also its file-name prefix)."""
     name = track_name.lower()
     for key, cat in (
         ("vocal", "vocal"), ("voice", "vocal"), ("bass", "bass"), ("piano", "keys"),
         ("keys", "keys"), ("guitar", "guitar"), ("synth", "synth"), ("other", "melodic"),
-        ("instrumental", "melodic"), ("mix", "melodic"),
+        ("instrumental", "melodic"), ("mix", "mix"),
     ):
         if key in name:
             return cat
@@ -186,6 +195,29 @@ def detect_key(y: np.ndarray, sr: int) -> tuple[str | None, float]:
 
 def tonal(y: np.ndarray, sr: int, category: str | None = None) -> dict:
     """Note for short one-shots, key for longer phrases; skipped for unpitched drums."""
+    with warnings.catch_warnings():  # librosa is chatty about very short sounds
+        warnings.simplefilter("ignore")
+        return _tonal(y, sr, category)
+
+
+def key_of(y: np.ndarray, sr: int, drum_track: bool) -> str | None:
+    """Key / note for an arbitrary cut. On drum tracks only single pitched hits (kick /
+    808, tom, perc) get a note: never hats or snares, and never multi-hit drum loops,
+    whose "key" would just be noise in the chroma."""
+    category = None
+    if drum_track and y.size > sr * DRUM_ONE_SHOT_MAX_S:
+        return None
+    if drum_track:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            category = classify_drum(features(y, sr))[0]
+    if y.size < sr * 0.03:
+        return None
+    y22 = librosa.resample(y, orig_sr=sr, target_sr=22050) if sr != 22050 else y
+    return tonal(y22, 22050, category)["key"]
+
+
+def _tonal(y: np.ndarray, sr: int, category: str | None) -> dict:
     if category in UNPITCHED:
         return {"key": None, "pitch_hz": None, "key_confidence": 0.0}
     dur = len(y) / sr

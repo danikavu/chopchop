@@ -1,16 +1,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type WaveSurfer from 'wavesurfer.js'
-import { api } from '../api'
+import { api, onHistory, type UndoState } from '../api'
 import type { Job, Meta, Project, Sample, Slice } from '../types'
-import { fmtTime, label, stopPreview, trackColor, useJob } from '../util'
+import { fmtTime, gridPoints, isDrumTrack, label, snapTo, stopPreview, trackColor, useJob } from '../util'
 import { DrumPads } from './DrumPads'
+import { JobProgress, SEPARATION_STEPS } from './JobProgress'
 import { KitPanel } from './KitPanel'
 import { SampleBrowser } from './SampleBrowser'
+import { type SeparateOptions, StemPicker } from './StemPicker'
+import { TempoControl } from './TempoControl'
 import { SampleEditor } from './SampleEditor'
 import { SlicePanel } from './SlicePanel'
 import { TrackLane } from './TrackLane'
 
 const HEAD_W = 168
+const MOD = /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘' : 'Ctrl+'
 const MAX_ZOOM = 3000
 
 const newId = () => Math.random().toString(16).slice(2, 12).padEnd(10, '0')
@@ -38,8 +42,26 @@ export function ProjectView({ pid, meta, onBack }: Props) {
   const [tab, setTab] = useState<'slice' | 'kit'>('slice')
   const [editing, setEditing] = useState<Sample | null>(null)
   const [selectedPad, setSelectedPad] = useState<number | null>(null)
+  const [showBeats, setShowBeats] = useState(true)
+  const [gridStep, setGridStep] = useState(1)
+  const [snapEdits, setSnapEdits] = useState(false)
+  const grid = useMemo(
+    () => gridPoints(project?.tempo?.beats ?? [], gridStep, project?.tempo?.downbeat ?? 0),
+    [project?.tempo, gridStep],
+  )
+  // Snapping for slice edits (read from lane callbacks, which are created once).
+  const snapRef = useRef<number[] | null>(null)
+  snapRef.current = snapEdits && grid.length > 1 ? grid : null
+  const snapSlice = (s: Slice): Slice => {
+    const g = snapRef.current
+    if (!g) return s
+    const start = snapTo(g, s.start)
+    let end = snapTo(g, s.end)
+    if (end <= start) end = g.find((t) => t > start) ?? s.end
+    return { ...s, start, end }
+  }
   const [sepJobId, setSepJobId] = useState<string | null>(null)
-  const [model, setModel] = useState(() => meta.models.find((m) => m.default)?.id ?? meta.models[0]?.id ?? '')
+  const [showSeparate, setShowSeparate] = useState(false)
 
   const lanes = useRef(new Map<string, WaveSurfer>())
   const lanesBox = useRef<HTMLDivElement>(null)
@@ -57,20 +79,71 @@ export function ProjectView({ pid, meta, onBack }: Props) {
     window.setTimeout(() => setNotice((n) => (n === msg ? null : n)), 2500)
   }
 
+  // Slice edits are saved after a short pause (a drag fires many updates); `label`
+  // names the undo step, null means local-only (e.g. loading from the server).
+  const pendingSave = useRef<{ slices: Slice[]; label: string } | null>(null)
+  const flushSlices = useCallback(async () => {
+    window.clearTimeout(saveTimer.current)
+    const pending = pendingSave.current
+    pendingSave.current = null
+    if (pending) await api.saveSlices(pid, pending.slices, pending.label)
+  }, [pid])
   const setSlices = useCallback(
-    (next: Slice[], persist = true) => {
+    (next: Slice[], label: string | null) => {
       const sorted = [...next].sort(byStart)
       slicesRef.current = sorted
       setSlicesState(sorted)
-      if (persist) {
+      if (label) {
+        pendingSave.current = { slices: sorted, label }
         window.clearTimeout(saveTimer.current)
         saveTimer.current = window.setTimeout(() => {
-          api.saveSlices(pid, sorted).catch((e) => setError(`Saving slices failed: ${e.message}`))
+          flushSlices().catch((e) => setError(`Saving slices failed: ${e.message}`))
         }, 400)
       }
     },
-    [pid],
+    [flushSlices],
   )
+
+  // ---------- undo / redo ----------
+
+  const [history, setHistory] = useState<UndoState>({ undo: null, redo: null })
+  useEffect(() => onHistory(setHistory), [])
+
+  const applyProject = (p: Project) => {
+    setProject(p)
+    setSlices(p.slices, null)
+    setSelectedId((id) => (p.slices.some((s) => s.id === id) ? id : null))
+    setExportTracks((cur) => cur.filter((n) => p.tracks.some((t) => t.name === n)))
+    setEditing(null)
+    if (!p.tracks.some((t) => t.name === focusedRef.current)) setFocus('mix')
+  }
+
+  const undoRedo = async (redo: boolean) => {
+    try {
+      await flushSlices() // an edit still waiting to save is the one to undo
+      if (redo) {
+        const r = await api.redo(pid)
+        applyProject(r.project)
+        flash(`Redo: ${r.redone}`)
+      } else {
+        const r = await api.undo(pid)
+        applyProject(r.project)
+        flash(`Undo: ${r.undone}`)
+      }
+    } catch (e) {
+      flash((e as Error).message === 'nothing to undo' || (e as Error).message === 'nothing to redo'
+        ? `Nothing to ${redo ? 'redo' : 'undo'}` : `Undo failed: ${(e as Error).message}`)
+    }
+  }
+
+  const autoTempo = async () => {
+    try {
+      const tempo = await api.detectTempo(pid)
+      setProject((p) => (p ? { ...p, tempo } : p))
+    } catch {
+      /* leave it for the user to run by hand */
+    }
+  }
 
   const reload = useCallback(async () => {
     const p = await api.getProject(pid)
@@ -82,12 +155,14 @@ export function ProjectView({ pid, meta, onBack }: Props) {
   useEffect(() => {
     reload()
       .then((p) => {
-        setSlices(p.slices, false)
+        setSlices(p.slices, null)
+        void api.history(pid)
         const stems = p.tracks.filter((t) => t.kind === 'stem')
         const start = stems.find((t) => t.name.includes('drum'))?.name ?? 'mix'
         focusedRef.current = start
         setFocusedState(start)
         setExportTracks((stems.length ? stems : p.tracks).map((t) => t.name))
+        if (!p.tempo && stems.some((t) => isDrumTrack(t.name))) void autoTempo()
       })
       .catch((e) => setError(e.message))
     // Resume watching a separation that is still running (e.g. after a reload).
@@ -130,9 +205,10 @@ export function ProjectView({ pid, meta, onBack }: Props) {
       reload().then((p) => {
         const stems = p.tracks.filter((t) => t.kind === 'stem').map((t) => t.name)
         setExportTracks(stems)
-        const drums = stems.find((n) => n.includes('drum'))
+        const drums = stems.find((n) => isDrumTrack(n))
         if (drums) setFocus(drums)
-        flash(`Separated into ${stems.length} stems`)
+        else if (!p.tracks.some((t) => t.name === focusedRef.current)) setFocus('mix') // lane was replaced
+        flash(`Separated into ${stems.length} stems: ${stems.join(', ')}`)
       })
   })
 
@@ -174,10 +250,13 @@ export function ProjectView({ pid, meta, onBack }: Props) {
           ws.setScroll(lastScroll.current)
         } else lanes.current.delete(name)
       },
-      onSliceChange: (s: Slice) => setSlices(slicesRef.current.map((x) => (x.id === s.id ? s : x))),
+      onSliceChange: (s: Slice) => {
+        const snapped = snapSlice(s)
+        setSlices(slicesRef.current.map((x) => (x.id === s.id ? snapped : x)), 'Move slice')
+      },
       onSliceCreate: (start: number, end: number) => {
-        const s = { id: newId(), start, end }
-        setSlices([...slicesRef.current, s])
+        const s = snapSlice({ id: newId(), start, end })
+        setSlices([...slicesRef.current, s], 'Draw slice')
         setSelectedId(s.id)
       },
       onSelectSlice: setSelectedId,
@@ -192,19 +271,19 @@ export function ProjectView({ pid, meta, onBack }: Props) {
   const togglePlay = () => void focusedLane()?.playPause()
 
   const splitAtPlayhead = () => {
-    const t = timeRef.current
+    const t = snapRef.current ? snapTo(snapRef.current, timeRef.current) : timeRef.current
     const cur = slicesRef.current
     const hit = cur.find((s) => s.start < t - 0.005 && s.end > t + 0.005)
     if (hit) {
       const right = { id: newId(), start: t, end: hit.end }
-      setSlices([...cur.filter((s) => s.id !== hit.id), { ...hit, end: t }, right])
+      setSlices([...cur.filter((s) => s.id !== hit.id), { ...hit, end: t }, right], 'Split slice')
       setSelectedId(right.id)
     } else {
       const next = cur.find((s) => s.start > t)
       const end = Math.min(next ? next.start : t + 0.5, project?.duration ?? t + 0.5)
       if (end - t < 0.01) return
       const s = { id: newId(), start: t, end }
-      setSlices([...cur, s])
+      setSlices([...cur, s], 'Add slice')
       setSelectedId(s.id)
     }
   }
@@ -213,7 +292,7 @@ export function ProjectView({ pid, meta, onBack }: Props) {
     if (!selectedId) return
     const cur = slicesRef.current
     const i = cur.findIndex((s) => s.id === selectedId)
-    setSlices(cur.filter((s) => s.id !== selectedId))
+    setSlices(cur.filter((s) => s.id !== selectedId), 'Delete slice')
     setSelectedId(cur[i + 1]?.id ?? cur[i - 1]?.id ?? null)
   }
 
@@ -249,7 +328,13 @@ export function ProjectView({ pid, meta, onBack }: Props) {
     const onKey = (e: KeyboardEvent) => {
       if (editing) return
       const el = e.target as HTMLElement
-      if (el.closest('input, select, textarea, [contenteditable]')) return
+      if (el.closest('input, select, textarea, [contenteditable]')) return // native text undo there
+      const mod = e.metaKey || e.ctrlKey
+      if (mod && !e.altKey && (e.key === 'z' || e.key === 'Z' || e.key === 'y')) {
+        e.preventDefault()
+        void undoRedo(e.key === 'y' || e.shiftKey) // Ctrl+Z / ⌘Z undo · Ctrl+Shift+Z / ⌘⇧Z / Ctrl+Y redo
+        return
+      }
       if (e.metaKey || e.ctrlKey || e.altKey) return
       switch (e.key) {
         case ' ':
@@ -287,9 +372,9 @@ export function ProjectView({ pid, meta, onBack }: Props) {
 
   // ---------- pads ----------
 
-  const setPads = (pads: (string | null)[]) => {
+  const setPads = (pads: (string | null)[], label = 'Edit pads') => {
     setProject((p) => (p ? { ...p, pads } : p))
-    api.savePads(pid, pads).catch((e) => {
+    api.savePads(pid, pads, label).catch((e) => {
       setError(`Saving pads failed: ${e.message}`)
       void reload()
     })
@@ -305,17 +390,19 @@ export function ProjectView({ pid, meta, onBack }: Props) {
       return
     }
     pads[target] = sid
-    setPads(pads)
+    setPads(pads, 'Load pad')
     // Step to the next pad so a run of samples can be loaded in a row.
     setSelectedPad(Math.min(target + 1, pads.length - 1))
   }
 
   // ---------- stems ----------
 
-  const separate = async () => {
+  const separate = async (opts: SeparateOptions) => {
     setError(null)
     try {
-      const j = await api.separate(pid, model)
+      await flushSlices()
+      const j = await api.separate(pid, opts)
+      setShowSeparate(false)
       setSepJobId(j.id)
     } catch (e) {
       setError((e as Error).message)
@@ -328,6 +415,7 @@ export function ProjectView({ pid, meta, onBack }: Props) {
     try {
       for (const f of Array.from(files)) await api.importStem(pid, f)
       const p = await reload()
+      if (!p.tempo && p.tracks.some((t) => isDrumTrack(t.name))) void autoTempo()
       setExportTracks(p.tracks.filter((t) => t.kind === 'stem').map((t) => t.name))
       flash(`Imported ${files.length} stem${files.length > 1 ? 's' : ''}`)
     } catch (e) {
@@ -363,33 +451,48 @@ export function ProjectView({ pid, meta, onBack }: Props) {
         <button className="link" onClick={onBack}>← Projects</button>
         <h1 className="title">{project.name}</h1>
         <span className="muted">{fmtTime(project.duration ?? 0)} · {project.sample_rate} Hz</span>
+        <TempoControl
+          pid={pid}
+          tempo={project.tempo}
+          tracks={tracks}
+          showBeats={showBeats}
+          onShowBeats={setShowBeats}
+          onChange={(tempo) => setProject((p) => (p ? { ...p, tempo } : p))}
+        />
         <div className="spacer" />
         {notice && <span className="notice">{notice}</span>}
+        <div className="undo-btns">
+          <button onClick={() => void undoRedo(false)} disabled={!history.undo}
+            title={history.undo ? `Undo ${history.undo} (${MOD}Z)` : 'Nothing to undo'}>↶</button>
+          <button onClick={() => void undoRedo(true)} disabled={!history.redo}
+            title={history.redo ? `Redo ${history.redo} (${MOD}⇧Z)` : 'Nothing to redo'}>↷</button>
+        </div>
         <input ref={fileInput} type="file" accept="audio/*" multiple hidden
           onChange={(e) => {
             void importStems(e.target.files)
             e.target.value = ''
           }} />
+        {hasStems && meta.separation.available && !sepJobId && (
+          <button onClick={() => setShowSeparate((v) => !v)} title="Re-separate with another model or stem choice">
+            Separate…
+          </button>
+        )}
         <button onClick={() => fileInput.current?.click()}>Import stems…</button>
       </header>
 
-      {!hasStems && !sepJobId && (
-        <div className="banner">
-          <div>
-            <strong>Separate this track into stems</strong>
-            <div className="muted">Runs UVR models locally (first run downloads the model).</div>
+      {(!hasStems || showSeparate) && !sepJobId && (
+        <div className="banner separate-banner">
+          <div className="separate-intro">
+            <strong>{hasStems ? 'Separate again' : 'Separate this track into stems'}</strong>
+            <div className="muted">
+              Runs UVR models locally (first run downloads the model)
+              {meta.device && <> · runs on <b className={`device ${meta.device.device}`}>{meta.device.name}</b></>}
+            </div>
+            {meta.device?.hint && <div className="warn small">{meta.device.hint}</div>}
           </div>
           {meta.separation.available ? (
-            <>
-              <select value={model} onChange={(e) => setModel(e.target.value)}>
-                {meta.models.map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.label} — {m.stems.join(', ')}
-                  </option>
-                ))}
-              </select>
-              <button className="primary" onClick={separate}>Separate stems</button>
-            </>
+            <StemPicker meta={meta} hasStems={hasStems} onStart={separate}
+              onCancel={hasStems ? () => setShowSeparate(false) : undefined} />
           ) : (
             <div className="warn">Separation unavailable: {meta.separation.reason}. You can still import stems.</div>
           )}
@@ -397,11 +500,7 @@ export function ProjectView({ pid, meta, onBack }: Props) {
       )}
       {sepJobId && (
         <div className="banner">
-          <div className="progress grow">
-            <div className={`bar ${sepJob && sepJob.progress < 0.9 && sepJob.progress >= 0.2 ? 'indeterminate' : ''}`}
-              style={{ width: `${Math.round((sepJob?.progress ?? 0) * 100)}%` }} />
-            <span>{sepJob?.message || 'Starting separation…'}</span>
-          </div>
+          <JobProgress job={sepJob} steps={SEPARATION_STEPS} fallback="Starting separation…" />
         </div>
       )}
 
@@ -436,6 +535,8 @@ export function ProjectView({ pid, meta, onBack }: Props) {
                 exportChecked={exportTracks.includes(t.name)}
                 timeline={i === 0}
                 showScrollbar={i === tracks.length - 1}
+                beats={showBeats ? project.tempo?.beats : undefined}
+                downbeat={project.tempo?.downbeat ?? 0}
                 {...laneEvents}
                 onDelete={t.kind === 'stem' ? deleteTrack : undefined}
               />
@@ -515,12 +616,27 @@ export function ProjectView({ pid, meta, onBack }: Props) {
               selectedId={selectedId}
               exportTracks={exportTracks}
               onFocus={setFocus}
-              onSlices={(s) => {
-                setSlices(s)
+              onSlices={(s, label) => {
+                setSlices(s, label)
                 setSelectedId(null)
               }}
               onToggleExport={laneEvents.onToggleExport}
               onSaveSelectedAsSample={saveSelectedAsSample}
+              duration={project.duration ?? 0}
+              tempo={project.tempo}
+              gridStep={gridStep}
+              onGridStep={setGridStep}
+              grid={grid}
+              snapEdits={snapEdits}
+              onSnapEdits={setSnapEdits}
+              onDownbeat={async (downbeat) => {
+                try {
+                  const tempo = await api.setTempo(pid, { downbeat })
+                  setProject((p) => (p ? { ...p, tempo } : p))
+                } catch (e) {
+                  setError((e as Error).message)
+                }
+              }}
             />
           ) : (
             <KitPanel key={tracks.map((t) => t.name).join()} pid={pid} tracks={tracks} onDone={() => void reload()} />

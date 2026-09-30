@@ -68,3 +68,35 @@ def drum_loop(bars=4, bpm=120):
         events.append((at + beat / 2, hat()))
         times += [at, at + beat / 2]
     return place(events, bars * 4 * beat + 0.5), sorted(times)
+
+
+def groove(bpm=96, bars=8, hats="16th", swing=50, drift_to=None, jitter_ms=0.0, seed=0, ghost=False):
+    """A drum groove with known tempo and swing.
+
+    hats:     "16th" or "8th" hi-hats.
+    swing:    MPC-style swing %, applied to the hat grid (50 = straight, 66 = triplet).
+    drift_to: if set, the tempo glides linearly from ``bpm`` to this (a live drummer).
+    jitter_ms: random human timing error per hit.
+    Returns (audio, beat_times).
+    """
+    rng = np.random.default_rng(seed)
+    n_beats = bars * 4
+    tempos = np.linspace(bpm, drift_to or bpm, n_beats + 1)
+    beats = np.concatenate([[0.2], 0.2 + np.cumsum(60.0 / tempos[:-1])])
+    sub = 4 if hats == "16th" else 2
+    events = []
+
+    def at(t):
+        return max(0.0, t + rng.normal(0, jitter_ms / 1000)) if jitter_ms else t
+
+    for i in range(n_beats):
+        b, dur = beats[i], beats[i + 1] - beats[i]
+        events.append((at(b), kick() if i % 2 == 0 else snare()))
+        if ghost and i % 4 == 3:
+            events.append((at(b + dur * 0.75), snare() * 0.25))
+        pair = dur * 2 / sub  # a swing pair spans two grid steps
+        for k in range(sub):
+            pos = (k // 2) * pair + (pair * swing / 100 if k % 2 else 0.0)
+            events.append((at(b + pos), hat() * (0.5 if k % 2 == 0 else 0.35)))
+    total = beats[-1] + 1.0
+    return place(events, total), beats[:-1]

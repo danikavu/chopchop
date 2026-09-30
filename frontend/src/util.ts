@@ -37,12 +37,22 @@ const CATEGORY_COLORS: Record<string, string> = {
   synth: '#22d3ee',
   melodic: '#60a5fa',
   fx: '#c084fc',
+  mix: '#cbd5e1',
   other: '#9aa4b8',
 }
 
 export function categoryColor(cat: string): string {
   return CATEGORY_COLORS[cat] ?? '#9aa4b8'
 }
+
+/** Mirrors the backend: only drum tracks get kick/snare/hat labels. */
+export function isDrumTrack(name: string): boolean {
+  const n = name.toLowerCase()
+  return n.includes('drum') || n.includes('perc')
+}
+
+export const NOT_DRUMS_NOTE =
+  'Not a drum track: sounds are labelled and named by the track type (vocal_01, bass_01, …) instead of kick / snare / hat.'
 
 export function label(s: string): string {
   return s.replace(/_/g, ' ')
@@ -118,4 +128,54 @@ export function keySuggestions(notes: string[], keys: string[]): string[] {
   const out: string[] = []
   for (let oct = 0; oct <= 7; oct++) for (const n of notes) out.push(`${n}${oct}`)
   return [...keys, ...out]
+}
+
+/** Grid resolutions, in beats. */
+export const GRID_STEPS: { beats: number; label: string }[] = [
+  { beats: 0.25, label: '1/16' },
+  { beats: 0.5, label: '1/8' },
+  { beats: 1, label: '1 beat' },
+  { beats: 2, label: '2 beats' },
+  { beats: 4, label: '1 bar' },
+  { beats: 8, label: '2 bars' },
+  { beats: 16, label: '4 bars' },
+]
+
+/**
+ * Grid lines every `step` beats, built from the tracked beats (so the grid follows a
+ * live drummer's tempo drift). Steps under a beat split each beat evenly; bar-sized
+ * steps start at the downbeat. One extra line past the last beat closes the final cell.
+ */
+export function gridPoints(beats: number[], step: number, downbeat = 0): number[] {
+  if (beats.length < 2) return []
+  const ibi = (beats[beats.length - 1] - beats[0]) / (beats.length - 1)
+  const ext = [...beats, beats[beats.length - 1] + ibi]
+  const out: number[] = []
+  if (step < 1) {
+    const n = Math.round(1 / step)
+    for (let i = 0; i < ext.length - 1; i++)
+      for (let k = 0; k < n; k++) out.push(ext[i] + ((ext[i + 1] - ext[i]) * k) / n)
+    out.push(ext[ext.length - 1])
+    return out
+  }
+  const k = Math.round(step)
+  for (let i = 0; i < ext.length; i++) if (i >= downbeat && (i - downbeat) % k === 0) out.push(ext[i])
+  // Close the last cell even if it runs past the tracked beats.
+  const last = out[out.length - 1]
+  if (last !== undefined && ext[ext.length - 1] - last < k * ibi * 0.5) return out
+  if (last !== undefined) out.push(last + k * ibi)
+  return out
+}
+
+/** Nearest grid line to t (binary search). */
+export function snapTo(points: number[], t: number): number {
+  if (!points.length) return t
+  let lo = 0
+  let hi = points.length - 1
+  while (hi - lo > 1) {
+    const mid = (lo + hi) >> 1
+    if (points[mid] <= t) lo = mid
+    else hi = mid
+  }
+  return Math.abs(points[lo] - t) <= Math.abs(points[hi] - t) ? points[lo] : points[hi]
 }

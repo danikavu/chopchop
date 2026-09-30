@@ -1,4 +1,25 @@
-import type { ExportResult, Job, Meta, Project, ProjectSummary, Sample, Slice, Track } from './types'
+import type { ExportResult, Job, Meta, Project, ProjectSummary, Sample, Slice, Tempo, Track } from './types'
+
+export interface UndoState {
+  undo: string | null
+  redo: string | null
+}
+type HistoryListener = (h: UndoState) => void
+const historyListeners = new Set<HistoryListener>()
+
+/** Every project response carries what Undo / Redo would do next (see the backend middleware). */
+export function onHistory(fn: HistoryListener): () => void {
+  historyListeners.add(fn)
+  return () => historyListeners.delete(fn)
+}
+
+function readHistory(res: Response) {
+  const undo = res.headers.get('X-Chopper-Undo')
+  const redo = res.headers.get('X-Chopper-Redo')
+  if (undo === null || redo === null) return
+  const h = { undo: decodeURIComponent(undo) || null, redo: decodeURIComponent(redo) || null }
+  historyListeners.forEach((fn) => fn(h))
+}
 
 async function req<T>(method: string, url: string, body?: unknown): Promise<T> {
   const init: RequestInit = { method }
@@ -9,6 +30,7 @@ async function req<T>(method: string, url: string, body?: unknown): Promise<T> {
     init.headers = { 'Content-Type': 'application/json' }
   }
   const res = await fetch(url, init)
+  readHistory(res)
   if (!res.ok) {
     let detail = res.statusText
     try {
@@ -52,7 +74,8 @@ export const api = {
   trackPeaks: (pid: string, name: string, n = 8000) =>
     req<{ duration: number; peaks: number[] }>('GET', `${P(pid)}/tracks/${enc(name)}/peaks?n=${n}`),
 
-  separate: (pid: string, model: string) => req<Job>('POST', `${P(pid)}/separate`, { model }),
+  separate: (pid: string, body: { model: string; stems: string[] | null; rest: boolean; replace: boolean }) =>
+    req<Job>('POST', `${P(pid)}/separate`, body),
   job: (jid: string) => req<Job>('GET', `/api/jobs/${jid}`),
   projectJobs: (pid: string) => req<Job[]>('GET', `${P(pid)}/jobs`),
 
@@ -60,11 +83,20 @@ export const api = {
     pid: string,
     body: { track: string; sensitivity: number; min_gap: number; max_len: number | null; gate_db: number },
   ) => req<{ slices: Slice[] }>('POST', `${P(pid)}/slices/detect`, body),
-  saveSlices: (pid: string, slices: Slice[]) => req<{ slices: Slice[] }>('PUT', `${P(pid)}/slices`, { slices }),
+  saveSlices: (pid: string, slices: Slice[], label?: string) =>
+    req<{ slices: Slice[] }>('PUT', `${P(pid)}/slices`, { slices, label }),
   exportSlices: (
     pid: string,
-    body: { tracks: string[]; slice_ids?: string[]; fade_in_ms: number; fade_out_ms: number; normalize: boolean },
-  ) => req<ExportResult>('POST', `${P(pid)}/slices/export`, body),
+    body: {
+      tracks: string[]
+      slice_ids?: string[]
+      fade_in_ms: number
+      fade_out_ms: number
+      normalize: boolean
+      key_names: boolean
+      bpm_names: boolean
+    },
+  ) => req<Job>('POST', `${P(pid)}/slices/export`, body),
 
   buildKit: (
     pid: string,
@@ -91,7 +123,13 @@ export const api = {
   sampleAudioUrl: (pid: string, s: Sample) => `${P(pid)}/samples/${s.id}/audio?v=${s.start}-${s.end}`,
   samplePeaks: (pid: string, s: Sample, n = 160) =>
     req<{ duration: number; peaks: number[] }>('GET', `${P(pid)}/samples/${s.id}/peaks?n=${n}&v=${s.start}-${s.end}`),
-  savePads: (pid: string, pads: (string | null)[]) => req<{ pads: (string | null)[] }>('PUT', `${P(pid)}/pads`, { pads }),
+  detectTempo: (pid: string, track?: string) => req<Tempo>('POST', `${P(pid)}/tempo`, { track }),
+  setTempo: (pid: string, body: { bpm?: number; downbeat?: number }) => req<Tempo>('PUT', `${P(pid)}/tempo`, body),
+  savePads: (pid: string, pads: (string | null)[], label?: string) =>
+    req<{ pads: (string | null)[] }>('PUT', `${P(pid)}/pads`, { pads, label }),
+  history: (pid: string) => req<UndoState>('GET', `${P(pid)}/history`),
+  undo: (pid: string) => req<{ undone: string; project: Project }>('POST', `${P(pid)}/undo`),
+  redo: (pid: string) => req<{ redone: string; project: Project }>('POST', `${P(pid)}/redo`),
   exportKit: (pid: string, body: { sample_ids?: string[]; kit_name: string; normalize: boolean; from_pads?: boolean }) =>
     req<ExportResult>('POST', `${P(pid)}/samples/export`, body),
 }

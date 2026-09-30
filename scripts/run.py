@@ -2,7 +2,7 @@
 """Cross-platform task runner for Chopper (macOS, Linux, Windows). Standard library only,
 so it runs with any Python 3.10+ before the virtualenv exists.
 
-    python scripts/run.py install [--no-separation]   # .venv + Python deps + npm deps
+    python scripts/run.py install [--gpu auto|cuda|directml|cpu] [--no-separation]
     python scripts/run.py build                       # build the UI into frontend/dist
     python scripts/run.py run [chopper args…]         # build the UI and start Chopper
     python scripts/run.py dev                         # API (auto-reload) + Vite hot reload
@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -65,6 +66,56 @@ def ffmpeg_hint() -> None:
     print(f"\nNote: ffmpeg is not installed; stem separation needs it.\n  Install: {how}\n")
 
 
+# CUDA builds PyTorch publishes (download.pytorch.org/whl/cuXXX), newest first.
+TORCH_CUDA = [(13, 2), (13, 0), (12, 8), (12, 6), (12, 4), (12, 1), (11, 8)]
+
+
+def driver_cuda() -> tuple[int, int] | None:
+    """Highest CUDA version the NVIDIA driver supports, from nvidia-smi; None if no NVIDIA GPU."""
+    if not shutil.which("nvidia-smi"):
+        return None
+    try:
+        out = subprocess.run(["nvidia-smi"], capture_output=True, text=True, timeout=20).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    m = re.search(r"CUDA Version:\s*(\d+)\.(\d+)", out)
+    return (int(m.group(1)), int(m.group(2))) if m else None
+
+
+def pick_gpu(choice: str) -> str:
+    if choice != "auto":
+        return choice
+    if platform.system() == "Darwin":
+        return "cpu"  # the regular PyTorch build already uses the Apple GPU (Metal)
+    return "cuda" if driver_cuda() else "cpu"
+
+
+def venv_eval(code: str) -> str:
+    r = subprocess.run([str(venv_python()), "-c", code], capture_output=True, text=True)
+    return r.stdout.strip() if r.returncode == 0 else ""
+
+
+def install_cuda_torch(py: Path) -> None:
+    """Swap in a CUDA build of PyTorch that the installed driver supports."""
+    if venv_eval("import torch; print(torch.version.cuda or '')"):
+        print("› PyTorch already has CUDA support")
+        return
+    driver = driver_cuda() or (99, 0)
+    candidates = [v for v in TORCH_CUDA if v <= driver]
+    if not candidates:
+        sys.exit(f"Your NVIDIA driver only supports CUDA {driver[0]}.{driver[1]}; update the driver "
+                 "(https://www.nvidia.com/drivers) or install with --gpu cpu.")
+    # A CPU build is "already satisfied" for pip, so remove it first.
+    subprocess.call([str(py), "-m", "pip", "uninstall", "-y", "torch", "torchvision", "torchaudio"])
+    for major, minor in candidates:
+        url = f"https://download.pytorch.org/whl/cu{major}{minor}"
+        print(f"› trying PyTorch for CUDA {major}.{minor}")
+        if subprocess.call([str(py), "-m", "pip", "install", "torch", "torchvision", "--index-url", url]) == 0:
+            return
+    sys.exit("Couldn't install a CUDA build of PyTorch for this Python/driver. "
+             "Try a different Python version (3.10-3.13), or install with --gpu cpu.")
+
+
 def install(args: argparse.Namespace) -> None:
     if sys.version_info < (3, 10):
         sys.exit(f"Python 3.10+ required (this is {platform.python_version()}).")
@@ -73,8 +124,26 @@ def install(args: argparse.Namespace) -> None:
         venv.create(VENV, with_pip=True)
     py = venv_python()
     sh(py, "-m", "pip", "install", "--upgrade", "pip")
-    extras = "dev" if args.no_separation else "separation,dev"
-    sh(py, "-m", "pip", "install", "-e", f".[{extras}]")
+    if args.no_separation:
+        sh(py, "-m", "pip", "install", "-e", ".[dev]")
+    else:
+        gpu = pick_gpu(args.gpu)
+        label = {"cuda": "NVIDIA CUDA", "directml": "DirectML (AMD/Intel)",
+                 "cpu": "Apple GPU (Metal) / CPU" if platform.system() == "Darwin" else "CPU"}[gpu]
+        print(f"› stem separation build: {label}")
+        # CPU and GPU onnxruntime packages clash; drop whichever one isn't wanted.
+        unwanted = {"cuda": ["onnxruntime", "onnxruntime-directml"],
+                    "directml": ["onnxruntime", "onnxruntime-gpu"],
+                    "cpu": ["onnxruntime-gpu", "onnxruntime-directml"]}[gpu]
+        subprocess.call([str(py), "-m", "pip", "uninstall", "-y", *unwanted],
+                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if gpu == "cuda":
+            install_cuda_torch(py)
+        extra = {"cuda": "separation-cuda", "directml": "separation-directml", "cpu": "separation"}[gpu]
+        sh(py, "-m", "pip", "install", "-e", f".[{extra},dev]")
+        device = venv_eval("from chopper.separation import device_info as d; i = d(); "
+                           "print(i['name'] + ('  — ' + i['hint'] if i['hint'] else ''))")
+        print(f"\nStem separation will run on: {device or 'unknown (check the log above)'}")
     sh(npm(), "install", cwd=FRONTEND)
     ffmpeg_hint()
     print("Done. Start Chopper with: python scripts/run.py run")
@@ -130,6 +199,9 @@ def main() -> None:
     sub = parser.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("install", help="create .venv and install Python + npm dependencies")
     p.add_argument("--no-separation", action="store_true", help="skip audio-separator/PyTorch (much smaller)")
+    p.add_argument("--gpu", choices=["auto", "cuda", "directml", "cpu"], default="auto",
+                   help="separation backend: auto (NVIDIA → cuda, else cpu; Apple Silicon uses Metal "
+                        "either way), cuda, directml (AMD/Intel on Windows, experimental) or cpu")
     p.set_defaults(fn=install)
     sub.add_parser("build", help="build the UI").set_defaults(fn=build)
     sub.add_parser("run", help="build the UI and start Chopper; extra flags (e.g. --port 9000 "

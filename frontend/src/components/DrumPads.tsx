@@ -2,7 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../api'
 import { chokeGroupFor, preload, trigger } from '../padEngine'
 import type { ExportResult, Job, Sample, Track } from '../types'
-import { categoryColor, label, useJob } from '../util'
+import { categoryColor, isDrumTrack, label, NOT_DRUMS_NOTE, useJob } from '../util'
+import { JobProgress } from './JobProgress'
 
 export const PADS_PER_BANK = 16
 const BANKS = ['A', 'B', 'C', 'D']
@@ -24,7 +25,7 @@ interface Props {
   projectName: string
   selectedPad: number | null
   onSelectPad: (i: number | null) => void
-  onPadsChange: (pads: (string | null)[]) => void
+  onPadsChange: (pads: (string | null)[], label?: string) => void
   onKitBuilt: () => Promise<void>
 }
 
@@ -87,7 +88,7 @@ export function DrumPads(p: Props) {
   const setPad = (i: number, sid: string | null) => {
     const next = [...p.pads]
     next[i] = sid
-    p.onPadsChange(next)
+    p.onPadsChange(next, sid ? 'Load pad' : 'Clear pad')
   }
 
   const onDrop = (i: number, e: React.DragEvent) => {
@@ -103,7 +104,7 @@ export function DrumPads(p: Props) {
       if (j === i) return
       const next = [...p.pads]
       ;[next[i], next[j]] = [next[j], next[i]] // swap, like moving pads on an MPC
-      p.onPadsChange(next)
+      p.onPadsChange(next, 'Swap pads')
       p.onSelectPad(i)
     }
   }
@@ -168,7 +169,7 @@ export function DrumPads(p: Props) {
           onClick={() => {
             const next = [...p.pads]
             next.fill(null, bank * PADS_PER_BANK, (bank + 1) * PADS_PER_BANK)
-            p.onPadsChange(next)
+            p.onPadsChange(next, `Clear bank ${BANKS[bank]}`)
           }}
           disabled={bankCount(bank) === 0}
         >
@@ -242,7 +243,7 @@ export function DrumPads(p: Props) {
             sound, spread across kicks, snares, hats and percussion.
           </p>
           <label className="field">
-            <span>Drum track</span>
+            <span>Source track</span>
             <select value={drumTrack} onChange={(e) => {
               userPicked.current = true
               setDrumTrack(e.target.value)
@@ -252,6 +253,7 @@ export function DrumPads(p: Props) {
               ))}
             </select>
           </label>
+          {drumTrack && !isDrumTrack(drumTrack) && <div className="warn small note">{NOT_DRUMS_NOTE}</div>}
           <label className="field">
             <span>Kit size</span>
             <select value={kitSize} onChange={(e) => setKitSize(Number(e.target.value))}>
@@ -271,12 +273,7 @@ export function DrumPads(p: Props) {
           <button className="primary wide" onClick={autoKit} disabled={busy || !drumTrack}>
             {busy ? 'Building…' : 'Auto kit → pads'}
           </button>
-          {job && busy && (
-            <div className="progress">
-              <div className="bar" style={{ width: `${Math.round(job.progress * 100)}%` }} />
-              <span>{job.message || 'Working…'}</span>
-            </div>
-          )}
+          {busy && <JobProgress job={job} fallback="Working…" />}
           <p className="tip">
             Click or press <kbd>M</kbd> <kbd>,</kbd> <kbd>.</kbd> <kbd>/</kbd> · <kbd>J</kbd>–<kbd>;</kbd> ·{' '}
             <kbd>U</kbd>–<kbd>P</kbd> · <kbd>7</kbd>–<kbd>0</kbd> to play. Drag samples from below onto a pad, drag pads to
