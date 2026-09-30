@@ -13,9 +13,40 @@ models. From there you can:
 You can see the mix and all stems as waveforms, drag slice edges by hand, trim samples with
 sliders, and set the category and key of each sample before exporting a kit.
 
+## System requirements
+
+Stem separation does the heavy lifting. Everything else (slicing, kits, pads, tempo)
+runs on any reasonable computer. The figures below are what the tool and model makers
+recommend:
+[UVR](https://github.com/Anjok07/ultimatevocalremovergui) (the app these models come
+from), [Demucs](https://github.com/facebookresearch/demucs) and
+[audio-separator](https://github.com/nomadkaraoke/python-audio-separator), the library
+Chopper uses.
+
+|  | Minimum | Recommended |
+|---|---|---|
+| **OS** | Windows 10, macOS Sonoma (14), or 64-bit Debian/Arch-based Linux | same |
+| **CPU** | 64-bit; Intel Pentium/Celeron not guaranteed (UVR) | a recent multi-core CPU |
+| **GPU: NVIDIA** | GTX 1060 6 GB (UVR's minimum); Demucs needs ≥ 3 GB VRAM | **8 GB+ VRAM** (UVR); Demucs uses about 7 GB at default settings |
+| **GPU: Apple** | M1 or newer on macOS Sonoma+ (audio-separator) | any M-series chip |
+| **GPU: AMD / Intel on Windows** | DirectML, experimental; Demucs isn't supported, so it runs on CPU | an NVIDIA card |
+| **Software** | Python 3.10–3.13, Node 20.19+ (or 22.12+), ffmpeg | same |
+
+- **Without a supported GPU,** everything still works; separation just runs on the CPU.
+  Demucs takes roughly **1.5× the track's length** (so about 5 minutes for a 3-minute
+  song), and the Roformer models are slower still. The GPU is several times faster.
+- **Intel Macs:** stem separation isn't supported, because audio-separator needs
+  PyTorch 2.3+ and PyTorch no longer publishes Intel-Mac builds. Import stems made
+  elsewhere with **Import stems…**; the rest of Chopper works.
+- **Python 3.14.1** isn't supported by audio-separator.
+- **Disk:** PyTorch takes a few GB. Each separation model downloads once, on first use,
+  and ranges from about 50 MB (Demucs) to several hundred MB (Roformer, MDX23C).
+  Projects keep their stems and samples as WAV, so allow a few hundred MB per song.
+
 ## Setup
 
-Requirements: Python 3.10+, Node 18+, and **ffmpeg** (needed for stem separation).
+Requirements: see [System requirements](#system-requirements). You need Python, Node
+and **ffmpeg** (for stem separation).
 
 The same commands work on macOS, Linux and Windows:
 
