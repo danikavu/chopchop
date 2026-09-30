@@ -2,8 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type WaveSurfer from 'wavesurfer.js'
 import { api, onHistory, type UndoState } from '../api'
 import type { Job, Meta, Project, Sample, Slice } from '../types'
-import { fmtTime, gridPoints, isDrumTrack, label, snapTo, stopPreview, trackColor, useJob } from '../util'
+import { fmtTime, gridPoints, isDrumTrack, isTextEntry, label, snapTo, stopPreview, trackColor, useJob } from '../util'
 import { DrumPads } from './DrumPads'
+import { BeatGrid } from './BeatGrid'
 import { JobProgress, SEPARATION_STEPS } from './JobProgress'
 import { KitPanel } from './KitPanel'
 import { SampleBrowser } from './SampleBrowser'
@@ -39,6 +40,8 @@ export function ProjectView({ pid, meta, onBack }: Props) {
   const [time, setTime] = useState(0)
   const [playing, setPlaying] = useState(false)
   const [scrollLeft, setScrollLeft] = useState(0)
+  const [laneWidth, setLaneWidth] = useState(0)
+  const [dragGrid, setDragGrid] = useState(false)
   const [tab, setTab] = useState<'slice' | 'kit'>('slice')
   const [editing, setEditing] = useState<Sample | null>(null)
   const [selectedPad, setSelectedPad] = useState<number | null>(null)
@@ -136,6 +139,17 @@ export function ProjectView({ pid, meta, onBack }: Props) {
     }
   }
 
+  /** Correct the beat grid by hand: shift it, or make the hit near a time a bar start. */
+  const adjustGrid = async (body: { shift?: number; anchor?: number }) => {
+    try {
+      const tempo = await api.setTempo(pid, body)
+      setProject((p) => (p ? { ...p, tempo } : p))
+      if (body.anchor !== undefined) flash('Bar 1 set at the playhead')
+    } catch (e) {
+      setError((e as Error).message)
+    }
+  }
+
   const autoTempo = async () => {
     try {
       const tempo = await api.detectTempo(pid)
@@ -186,6 +200,7 @@ export function ProjectView({ pid, meta, onBack }: Props) {
     const el = lanesBox.current
     if (!el || !duration) return
     const measure = () => {
+      setLaneWidth(el.clientWidth)
       const fit = Math.max(1, (el.clientWidth - HEAD_W - 4) / duration)
       const wasFitted = Math.abs(zoomRef.current - fitRef.current) < 1e-6
       fitRef.current = fit
@@ -349,7 +364,7 @@ export function ProjectView({ pid, meta, onBack }: Props) {
     const onKey = (e: KeyboardEvent) => {
       if (editing) return
       const el = e.target as HTMLElement
-      if (el.closest('input, select, textarea, [contenteditable]')) return // native text undo there
+      if (isTextEntry(el)) return // native text editing / undo there
       const mod = e.metaKey || e.ctrlKey
       if (mod && !e.altKey && (e.key === 'z' || e.key === 'Z' || e.key === 'y')) {
         e.preventDefault()
@@ -384,6 +399,10 @@ export function ProjectView({ pid, meta, onBack }: Props) {
           break
         case 'Escape':
           setSelectedId(null)
+          break
+        case 'b':
+        case 'B':
+          if (project?.tempo?.beats.length) void adjustGrid({ anchor: timeRef.current })
           break
       }
     }
@@ -556,14 +575,25 @@ export function ProjectView({ pid, meta, onBack }: Props) {
                 exportChecked={exportTracks.includes(t.name)}
                 timeline={i === 0}
                 showScrollbar={i === tracks.length - 1}
-                beats={showBeats ? project.tempo?.beats : undefined}
-                downbeat={project.tempo?.downbeat ?? 0}
                 {...laneEvents}
                 onDelete={t.kind === 'stem' ? deleteTrack : undefined}
                 tools={meta.separation.available && !sepJobId ? toolsFor(t.name) : undefined}
                 onTool={runTool}
               />
             ))}
+            {showBeats && (project.tempo?.beats.length ?? 0) > 1 && (
+              <BeatGrid
+                beats={project.tempo!.beats}
+                downbeat={project.tempo!.downbeat ?? 0}
+                step={gridStep}
+                zoom={zoom}
+                scrollLeft={scrollLeft}
+                width={Math.max(0, laneWidth - HEAD_W)}
+                left={HEAD_W}
+                draggable={dragGrid}
+                onShift={(s) => void adjustGrid({ shift: s })}
+              />
+            )}
             {playheadX >= HEAD_W && <div className="playhead" style={{ left: playheadX }} />}
           </div>
 
@@ -652,6 +682,10 @@ export function ProjectView({ pid, meta, onBack }: Props) {
               grid={grid}
               snapEdits={snapEdits}
               onSnapEdits={setSnapEdits}
+              onAnchor={() => void adjustGrid({ anchor: timeRef.current })}
+              onNudgeGrid={(s) => void adjustGrid({ shift: s })}
+              dragGrid={dragGrid}
+              onDragGrid={setDragGrid}
               onDownbeat={async (downbeat) => {
                 try {
                   const tempo = await api.setTempo(pid, { downbeat })

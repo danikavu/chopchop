@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../api'
 import { chokeGroupFor, preload, trigger } from '../padEngine'
 import type { ExportResult, Job, Sample, Track } from '../types'
-import { categoryColor, isDrumPart, isDrumTrack, label, NOT_DRUMS_NOTE, useJob } from '../util'
+import { categoryColor, isDrumPart, isDrumTrack, isTextEntry, label, NOT_DRUMS_NOTE, useJob } from '../util'
 import { JobProgress } from './JobProgress'
 
 export const PADS_PER_BANK = 16
@@ -79,7 +79,7 @@ export function DrumPads(p: Props) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.repeat || e.metaKey || e.ctrlKey || e.altKey) return
-      if ((e.target as HTMLElement).closest('input, select, textarea, [contenteditable]')) return
+      if (isTextEntry(e.target)) return
       if (document.querySelector('.modal')) return
       const n = PAD_KEYS.indexOf(e.key.toLowerCase())
       if (n < 0) return

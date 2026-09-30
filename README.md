@@ -145,7 +145,15 @@ lighter engine without PyTorch. You can then import stems you already have (e.g.
      - **Snap slices** moves every slice edge onto the grid;
      - **Snap while editing** does the same when you drag, draw or split.
      The grid follows the tracked beats, so it stays aligned with a drummer who drifts.
-     Bar lines are highlighted, and "Bar starts at beat ◀ n ▶" corrects the detected downbeat.
+     It's drawn as thin red lines over every lane, with bar lines glowing brighter.
+   - **Fixing a wrong grid:**
+     - **Bar 1 at playhead** (<kbd>B</kbd>): put the playhead on the hit where a bar
+       really starts. The grid shifts so a beat lands exactly on that hit, and it becomes
+       beat 1. A rough position is fine, because it snaps to the nearest drum attack.
+     - **Drag grid**: tick it, then drag a red bar line to slide the whole grid.
+     - **Shift grid ◀ ▶** moves the grid 10 ms per click (1 ms with Shift).
+     - **Bar starts at beat ◀ n ▶** moves only which beat counts as 1.
+     - All of these are undoable.
    - **Export** writes a zip with one folder per selected track. It runs in the background
      with a progress bar.
 3. **Kits & bits** tab: **Build drum kit** on the drum stem (optionally loading it onto the

@@ -99,3 +99,19 @@ def test_rescale_keeps_downbeat_on_the_bar():
     r = {"bpm": 100.0, "beats": [0.0, 0.6, 1.2, 1.8, 2.4, 3.0, 3.6, 4.2], "downbeat": 1, "alternatives": [], "range": None}
     assert tempo.rescale(r, 200.0)["downbeat"] == 2  # same time (0.6 s), finer beats
     assert tempo.rescale(r, 200.0)["beats"][2] == pytest.approx(0.6)
+
+
+def test_anchor_realigns_a_shifted_grid():
+    beats = [0.2 + i * 0.6 for i in range(16)]
+    wrong = tempo.shift({"bpm": 100.0, "beats": beats, "downbeat": 0}, 0.07)  # grid 70 ms late
+    fixed = tempo.anchor(wrong, 0.2 + 5 * 0.6)  # "this hit is beat 1"
+    assert fixed["beats"][fixed["downbeat"]::4][1] == pytest.approx(0.2 + 5 * 0.6, abs=1e-3)
+    assert np.allclose(fixed["beats"], beats, atol=1e-3)
+    assert fixed["source"] == "manual"
+
+
+def test_anchor_extends_grid_into_an_untracked_intro():
+    r = {"bpm": 100.0, "beats": [2.0 + i * 0.6 for i in range(10)], "downbeat": 0}
+    fixed = tempo.anchor(r, 0.8)
+    assert fixed["beats"][0] == pytest.approx(0.2, abs=1e-3)  # filled back to the start
+    assert 0.8 in [round(b, 3) for b in fixed["beats"][fixed["downbeat"]::4]]  # 0.8 is a bar start

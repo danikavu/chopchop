@@ -110,6 +110,8 @@ class TempoDetectReq(BaseModel):
 class TempoSetReq(BaseModel):
     bpm: float | None = Field(None, gt=20, lt=400)
     downbeat: int | None = Field(None, ge=0, le=3)  # which beat starts the bar
+    shift: float | None = Field(None, ge=-30, le=30)  # move the whole grid (seconds)
+    anchor: float | None = Field(None, ge=0)  # make the hit at this time a bar start
 
 
 class ExportKitReq(BaseModel):
@@ -400,13 +402,35 @@ def create_app(store: Store | None = None) -> FastAPI:
 
     @app.put("/api/projects/{pid}/tempo")
     def put_tempo(pid: str, req: TempoSetReq):
-        """Set the tempo by hand (typed, tapped, x2 / ÷2, or an alternative)."""
-        with store.edit(pid, "Change downbeat" if req.bpm is None else "Change tempo") as p:
+        """Adjust the tempo / grid by hand: bpm (typed, tapped, x2, ÷2), which beat is
+        beat 1, shift the grid, or anchor a bar start to a hit."""
+        label = ("Change tempo" if req.bpm is not None else "Set bar start" if req.anchor is not None
+                 else "Move beat grid" if req.shift is not None else "Change downbeat")
+        # Anchor on the actual attack near the chosen time, so a rough click lands on the hit.
+        at = None
+        if req.anchor is not None:
+            p0 = get_project(pid)
+            src = next((t for t in p0["tracks"] if t["name"] == (p0.get("tempo") or {}).get("track")), None)
+            at = req.anchor
+            if src:
+                y, sr = audio.read_mono(store.path(pid) / src["file"], sr=None,
+                                        start=max(0.0, req.anchor - 0.1), end=req.anchor + 0.1)
+                lo = max(0.0, req.anchor - 0.1)
+                i = int((req.anchor - lo) * sr)
+                at = lo + slicing.snap_to_attack(y, sr, i - int(0.06 * sr), i + int(0.06 * sr)) / sr
+        with store.edit(pid, label) as p:
             base = p.get("tempo") or {"bpm": req.bpm, "beats": [], "alternatives": [], "range": None}
             if req.bpm is not None:
                 base = tempo.rescale(base, req.bpm)
             if req.downbeat is not None:
                 base = {**base, "downbeat": req.downbeat}
+            if req.shift is not None:
+                base = tempo.shift(base, req.shift)
+            if at is not None:
+                try:
+                    base = tempo.anchor(base, at)
+                except ValueError as e:
+                    raise HTTPException(400, str(e))
             if base.get("bpm") is None:
                 raise HTTPException(400, "set a bpm first")
             p["tempo"] = base

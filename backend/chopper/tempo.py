@@ -156,6 +156,30 @@ def estimate_swing(onsets: np.ndarray, beats: np.ndarray) -> dict:
     return {"percent": None, "grid": None}
 
 
+def shift(result: dict, seconds: float) -> dict:
+    """Move the whole beat grid in time (e.g. dragged, or nudged a few ms)."""
+    beats = [round(b + seconds, 4) for b in result.get("beats") or []]
+    return {**result, "beats": [b for b in beats if b >= 0], "source": "manual"}
+
+
+def anchor(result: dict, t: float, meter: int = 4) -> dict:
+    """Make time t a bar start: shift the grid so a beat lands exactly on t and make
+    that beat beat 1. The grid is filled back to the start of the track (an intro the
+    tracker skipped) and forward to t if it lies past the tracked beats."""
+    beats = list(result.get("beats") or [])
+    if len(beats) < 2:
+        raise ValueError("no beat grid to adjust: detect the tempo first")
+    period = float(np.median(np.diff(beats)))
+    while beats[0] - period >= -period / 2:
+        beats.insert(0, beats[0] - period)
+    while beats[-1] + period / 2 < t:
+        beats.append(beats[-1] + period)
+    b = np.array(beats) + (t - beats[int(np.argmin(np.abs(np.array(beats) - t)))])
+    b = b[b >= -1e-6]
+    k = int(np.argmin(np.abs(b - t)))
+    return {**result, "beats": [round(float(x), 4) for x in b], "downbeat": k % meter, "source": "manual"}
+
+
 def rescale(result: dict, bpm: float) -> dict:
     """Apply a user-chosen tempo to a detection result, keeping the beat grid aligned:
     x2 adds the in-between beats, ÷2 keeps every other one, and any other tempo lays
