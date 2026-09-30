@@ -76,6 +76,8 @@ export const api = {
 
   separate: (pid: string, body: { model: string; stems: string[] | null; rest: boolean; replace: boolean }) =>
     req<Job>('POST', `${P(pid)}/separate`, body),
+  runTool: (pid: string, track: string, tool: string) =>
+    req<Job>('POST', `${P(pid)}/tracks/${enc(track)}/tool`, { tool }),
   job: (jid: string) => req<Job>('GET', `/api/jobs/${jid}`),
   projectJobs: (pid: string) => req<Job[]>('GET', `${P(pid)}/jobs`),
 
@@ -108,6 +110,7 @@ export const api = {
       max_per_category: number
       kit_size?: number
       load_pads?: boolean
+      tracks?: string[]
     },
   ) => req<Job>('POST', `${P(pid)}/kits`, body),
 

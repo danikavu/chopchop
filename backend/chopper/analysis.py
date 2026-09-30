@@ -145,6 +145,17 @@ def is_drum_track(track_name: str) -> bool:
     return "drum" in name or "perc" in name
 
 
+# Tracks made by the drum-split tool ("drums_kick", …): the model already did the labelling.
+DRUM_PART_CATEGORIES = {"kick": "kick", "snare": "snare", "toms": "tom", "hihat": "hihat",
+                        "ride": "cymbal", "crash": "cymbal"}
+
+
+def drum_part(track_name: str) -> str | None:
+    """'drums_kick' -> 'kick' category; None for anything that isn't a split drum part."""
+    suffix = track_name.lower().rsplit("_", 1)[-1]
+    return DRUM_PART_CATEGORIES.get(suffix) if "_" in track_name else None
+
+
 def category_for_track(track_name: str) -> str:
     """General category for everything cut from a non-drum track (also its file-name prefix)."""
     name = track_name.lower()

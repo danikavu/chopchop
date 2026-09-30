@@ -77,6 +77,25 @@ lighter engine without PyTorch. You can then import stems you already have (e.g.
 
      The bass-*specialist* models audio-separator offers (kuielab bass, 10.4 dB) score
      lower than Demucs, so they aren't included.
+   - **Two-stage** (Mel-Band vocals → Demucs 6-stem, or → Demucs fine-tuned):
+     - Stage 1 takes the vocals out with the best vocal model.
+     - Stage 2 runs Demucs on the *instrumental*, so no vocals leak into drums, bass,
+       guitar, piano or other.
+     - On the test song with known stems, the instrument stems summed together scored
+       29–31 dB against the true instrumental, versus 2.5 dB for Demucs alone. Vocals
+       scored 39.8 dB vs ~0 dB.
+     - The cost: isolated drums and bass come out about 1 dB lower.
+   - **Stem tools** (✦ on any stem lane) run on a single stem and add new lanes. Each run
+     is one undo step:
+     - **Split drums** (MDX23C DrumSep) makes `drums_kick`, `drums_snare`, `drums_toms`,
+       `drums_hihat`, `drums_ride` and `drums_crash`. In the drum pads, the **All drum
+       parts** source builds one kit from all of them: each part's category comes from the
+       model, and hits are judged against the loudest part, so faint leftovers of the split
+       don't become fake toms.
+     - **Remove reverb** (Mel-Band Roformer de-reverb) makes `<stem>_dry` and
+       `<stem>_reverb`.
+     - **Lead / backing vocals** (Mel-Band Roformer karaoke) makes `<stem>_lead` and
+       `<stem>_backing`.
    - **Presets:** **Vocals + instrumental** and **Drums + rest**, or tick any combination.
    - **The stems you leave out** can be mixed into one extra track: `instrumental` when
      only vocals are kept, `no_drums` when only drums are, `rest` otherwise. Or drop them.

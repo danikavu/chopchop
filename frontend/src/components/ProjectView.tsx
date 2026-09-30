@@ -198,19 +198,40 @@ export function ProjectView({ pid, meta, onBack }: Props) {
     return () => ro.disconnect()
   }, [duration])
 
+  // Separation and stem tools share the progress banner.
   const sepJob = useJob(sepJobId, (j: Job) => {
     setSepJobId(null)
-    if (j.status === 'error') setError(`Separation failed: ${j.error}`)
+    const isTool = j.kind.startsWith('tool:')
+    if (j.status === 'error') setError(`${isTool ? 'Stem tool' : 'Separation'} failed: ${j.error}`)
     else
       reload().then((p) => {
-        const stems = p.tracks.filter((t) => t.kind === 'stem').map((t) => t.name)
-        setExportTracks(stems)
-        const drums = stems.find((n) => isDrumTrack(n))
-        if (drums) setFocus(drums)
+        const made = (j.result as { tracks: string[] }).tracks
+        if (isTool) {
+          setExportTracks((cur) => [...new Set([...cur, ...made])])
+          flash(`Added ${made.join(', ')}`)
+          return
+        }
+        setExportTracks(p.tracks.filter((t) => t.kind === 'stem').map((t) => t.name))
+        const drums = made.find((n) => isDrumTrack(n))
+        if (drums && !isDrumTrack(focusedRef.current)) setFocus(drums)
         else if (!p.tracks.some((t) => t.name === focusedRef.current)) setFocus('mix') // lane was replaced
-        flash(`Separated into ${stems.length} stems: ${stems.join(', ')}`)
+        flash(`Separated into ${made.length} stems: ${made.join(', ')}`)
       })
   })
+
+  const runTool = async (track: string, tool: string) => {
+    setError(null)
+    try {
+      await flushSlices()
+      setSepJobId((await api.runTool(pid, track, tool)).id)
+    } catch (e) {
+      setError((e as Error).message)
+    }
+  }
+  const toolsFor = (name: string) =>
+    Object.entries(meta.tools ?? {})
+      .map(([id, t]) => ({ id, ...t, suggested: name.toLowerCase().includes(t.for) }))
+      .sort((a, b) => Number(b.suggested) - Number(a.suggested))
 
   // ---------- lanes / transport ----------
 
@@ -539,6 +560,8 @@ export function ProjectView({ pid, meta, onBack }: Props) {
                 downbeat={project.tempo?.downbeat ?? 0}
                 {...laneEvents}
                 onDelete={t.kind === 'stem' ? deleteTrack : undefined}
+                tools={meta.separation.available && !sepJobId ? toolsFor(t.name) : undefined}
+                onTool={runTool}
               />
             ))}
             {playheadX >= HEAD_W && <div className="playhead" style={{ left: playheadX }} />}

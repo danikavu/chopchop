@@ -87,3 +87,67 @@ def test_invalid_choices(client):
     url = f"/api/projects/{client.pid}/separate"
     assert client.post(url, json={"model": "htdemucs.yaml", "stems": ["piano"]}).status_code == 400
     assert client.post(url, json={"stems": []}).status_code == 400
+
+
+def tool_outputs(src, out, tool, progress=None):
+    """Stand-in for DrumSep: kick/snare/hat parts from the known loop."""
+    out.mkdir(parents=True, exist_ok=True)
+    beat = 0.5
+    parts = {"kick": [synth.kick(), 0], "snare": [synth.snare(), beat], "hihat": [synth.hat(), beat / 2]}
+    paths = {}
+    for name, (sig, off) in parts.items():
+        y = synth.place([(off + i * 2 * beat, sig) for i in range(4)], 4.5)
+        paths[name] = out / f"{name}.wav"
+        sf.write(paths[name], y, SR)
+    return paths
+
+
+def test_drum_split_tool_and_kit_from_parts(client, monkeypatch):
+    monkeypatch.setattr(separation, "run_tool", tool_outputs)
+    run(client, stems=["drums"], rest=False)
+    r = client.post(f"/api/projects/{client.pid}/tracks/drums/tool", json={"tool": "drumsep"})
+    assert r.status_code == 200, r.text
+    for _ in range(200):
+        j = client.get(f"/api/jobs/{r.json()['id']}").json()
+        if j["status"] != "running" and j["status"] != "pending":
+            break
+        time.sleep(0.05)
+    assert j["status"] == "done", j["error"]
+    names = [t["name"] for t in client.get(f"/api/projects/{client.pid}").json()["tracks"]]
+    assert names == ["mix", "drums", "drums_kick", "drums_snare", "drums_hihat"]
+    assert client.get(f"/api/projects/{client.pid}/history").json()["undo"] == "Split drums (drums)"
+
+    # One kit across all parts; categories come from the part, not the classifier.
+    r = client.post(f"/api/projects/{client.pid}/kits", json={
+        "track": "drums_kick", "tracks": ["drums_kick", "drums_snare", "drums_hihat"],
+        "kit_size": 16, "load_pads": True})
+    for _ in range(300):
+        j = client.get(f"/api/jobs/{r.json()['id']}").json()
+        if j["status"] in ("done", "error"):
+            break
+        time.sleep(0.05)
+    assert j["status"] == "done", j["error"]
+    samples = client.get(f"/api/projects/{client.pid}").json()["samples"]
+    assert {(s["track"], s["category"]) for s in samples} == {
+        ("drums_kick", "kick"), ("drums_snare", "snare"), ("drums_hihat", "hihat")}
+
+    assert client.post(f"/api/projects/{client.pid}/tracks/drums/tool", json={"tool": "nope"}).status_code == 400
+
+
+def test_two_stage_takes_vocals_from_first_model(tmp_path, monkeypatch):
+    calls = []
+
+    def fake_run(src, out, model, emit):
+        calls.append((Path(src).name, model))
+        stems = fake_stems(out)
+        if "mel_band" in model:  # the vocal model: vocals + instrumental
+            return {"vocals": stems["vocals"], "instrumental": stems["other"]}
+        return stems
+
+    monkeypatch.setattr(separation, "status", lambda: {"available": True, "reason": None})
+    monkeypatch.setattr(separation, "_run_model", fake_run)
+    out = separation.separate(tmp_path / "song.wav", tmp_path / "out", "two_stage_6s")
+    assert calls[0] == ("song.wav", "vocals_mel_band_roformer.ckpt")
+    assert calls[1][1] == "htdemucs_6s.yaml" and "Other" in calls[1][0]  # stage 2 ran on the instrumental
+    assert sorted(out) == sorted(STEMS)
+    assert out["vocals"].parent.name == "stage1"  # vocals from the vocal model

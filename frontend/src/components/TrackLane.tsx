@@ -19,6 +19,9 @@ export interface LaneEvents {
   onSelectSlice: (id: string | null) => void
   onToggleExport: (name: string) => void
   onDelete?: (name: string) => void
+  /** Stem tools (drum split, de-reverb, …), suitable ones listed first. */
+  tools?: { id: string; label: string; description: string; suggested: boolean }[]
+  onTool?: (track: string, tool: string) => void
 }
 
 interface Props extends LaneEvents {
@@ -49,6 +52,7 @@ export function TrackLane(props: Props) {
   cb.current = props
   const [ready, setReady] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [toolsOpen, setToolsOpen] = useState(false)
 
   useEffect(() => {
     let ws: WaveSurfer | null = null
@@ -180,6 +184,24 @@ export function TrackLane(props: Props) {
             <input type="checkbox" checked={exportChecked} onChange={() => props.onToggleExport(track.name)} />
             export
           </label>
+          {props.tools && props.tools.length > 0 && (
+            <span className="lane-tools">
+              <button className="icon-btn" title="Stem tools" onClick={() => setToolsOpen((o) => !o)}>✦</button>
+              {toolsOpen && (
+                <div className="lane-menu" onMouseLeave={() => setToolsOpen(false)}>
+                  {props.tools.map((t) => (
+                    <button key={t.id} onClick={() => {
+                      setToolsOpen(false)
+                      props.onTool?.(track.name, t.id)
+                    }}>
+                      <b>{t.label}</b>
+                      <span className="muted">{t.description}{t.suggested ? '' : ' · meant for other stems'}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </span>
+          )}
           {props.onDelete && (
             <button className="icon-btn" title="Remove stem" onClick={() => props.onDelete?.(track.name)}>
               ×

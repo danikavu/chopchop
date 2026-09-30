@@ -99,6 +99,7 @@ export interface Meta {
   separation: { available: boolean; reason: string | null }
   device: { device: 'cuda' | 'mps' | 'directml' | 'cpu'; name: string; hint: string | null } | null
   models: Model[]
+  tools: Record<string, { label: string; description: string; for: string }>
 }
 
 export interface ExportResult {
