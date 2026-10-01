@@ -89,7 +89,7 @@ def similarity(a: np.ndarray, b: np.ndarray) -> float:
 
 def _priority(c: dict) -> float:
     """Best-sounding first, with a nudge towards sounds the track uses a lot."""
-    return c["score"] * (1 + 0.15 * np.log(c["count"]))
+    return c["score"] * (1 + 0.15 * np.log(c.get("count") or c.get("occurrences") or 1))
 
 
 def _dedupe(cands: list[dict], max_similarity: float, max_per: int) -> list[dict]:
@@ -154,6 +154,7 @@ def extract(
     min_len: float | None = None,
     kit_size: int | None = None,
     progress: Progress = _noop,
+    ref_peak: float | None = None,
 ) -> list[dict]:
     """Build sample records (not yet saved) from a track.
 
@@ -161,6 +162,9 @@ def extract(
           'chops'   -> short onset-based bits labelled by the stem type
           'phrases' -> longer silence-separated bits labelled by the stem type
     kit_size: if set, trim the result to this many sounds with ``select_kit``.
+    ref_peak: level that "loud" is measured against (default: this track's peak). Pass
+        the loudest of several related tracks (e.g. split drum parts) so a part that only
+        holds faint leftovers from the split yields nothing.
     """
     src = project_dir / track["file"]
     progress(0.02, "Loading audio…")
@@ -187,11 +191,12 @@ def extract(
     if not regions:
         return []
 
-    ref_peak = float(np.max(np.abs(y))) + 1e-12
+    ref_peak = (ref_peak or float(np.max(np.abs(y)))) + 1e-12
     default_cat = analysis.category_for_track(track["name"])
     # Drum labels only make sense on a drum track; anything else (vocals, bass, the
     # full mix…) is labelled, and named, by its general category.
     drum_labels = mode == "drums" and analysis.is_drum_track(track["name"])
+    part = analysis.drum_part(track["name"]) if drum_labels else None
     cands = []
     for i, (a, b) in enumerate(regions):
         if i % 10 == 0:
@@ -205,7 +210,12 @@ def extract(
         if 20 * np.log10(np.max(np.abs(seg)) / ref_peak + 1e-12) < -30:
             continue
         f = analysis.features(seg, sr, pre=y[max(0, a - int(0.04 * sr)):a])
-        if drum_labels:
+        if part == "hihat":  # the hat part holds closed and open hats: tell them apart
+            cat, conf = analysis.classify_drum(f)
+            cat = cat if cat in ("hihat", "open_hat") else "hihat"
+        elif part:
+            cat, conf = part, 1.0
+        elif drum_labels:
             cat, conf = analysis.classify_drum(f)
         else:
             cat, conf = default_cat, 0.5

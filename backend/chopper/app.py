@@ -10,6 +10,7 @@ from dataclasses import asdict
 from pathlib import Path
 from urllib.parse import quote
 
+import numpy as np
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -60,8 +61,13 @@ class SeparateReq(BaseModel):
     replace: bool = True  # remove the project's current stems first
 
 
+class ToolReq(BaseModel):
+    tool: str  # a key of separation.TOOLS
+
+
 class KitReq(BaseModel):
     track: str
+    tracks: list[str] | None = None  # build one kit from several tracks (e.g. all drum parts)
     mode: str = "drums"  # drums | chops | phrases
     sensitivity: float = Field(0.5, ge=0, le=1)
     similarity: float = Field(0.93, ge=0.3, le=1)
@@ -104,6 +110,8 @@ class TempoDetectReq(BaseModel):
 class TempoSetReq(BaseModel):
     bpm: float | None = Field(None, gt=20, lt=400)
     downbeat: int | None = Field(None, ge=0, le=3)  # which beat starts the bar
+    shift: float | None = Field(None, ge=-30, le=30)  # move the whole grid (seconds)
+    anchor: float | None = Field(None, ge=0)  # make the hit at this time a bar start
 
 
 class ExportKitReq(BaseModel):
@@ -185,6 +193,7 @@ def create_app(store: Store | None = None) -> FastAPI:
             "separation": separation.status(),
             "device": separation.device_info() if separation.status()["available"] else None,
             "models": separation.MODELS,
+            "tools": {k: {x: v[x] for x in ("label", "description", "for")} for k, v in separation.TOOLS.items()},
         }
 
     # ---------- projects ----------
@@ -342,6 +351,35 @@ def create_app(store: Store | None = None) -> FastAPI:
 
         return asdict(jobs.submit("separate", pid, work))
 
+    # ---------- stem tools (drum split, de-reverb, lead/backing) ----------
+
+    @app.post("/api/projects/{pid}/tracks/{name}/tool")
+    def run_tool(pid: str, name: str, req: ToolReq):
+        p = get_project(pid)
+        t = track_or_404(p, name)
+        if req.tool not in separation.TOOLS:
+            raise HTTPException(400, f"unknown tool: {req.tool}")
+        st = separation.status()
+        if not st["available"]:
+            raise HTTPException(400, st["reason"])
+        tool = separation.TOOLS[req.tool]
+        folder = store.path(pid)
+
+        def work(job: Job):
+            out = folder / "separation" / new_id()
+            try:
+                parts = separation.run_tool(folder / t["file"], out, req.tool, job.update)
+                added = []
+                with store.undo_group(pid, f"{tool['label']} ({name})"):
+                    for i, (suffix, path) in enumerate(parts.items()):
+                        job.update(0.9 + 0.1 * i / len(parts), f"Importing {name}_{suffix}")
+                        added.append(add_track(pid, f"{name}_{suffix}", "stem", path)["name"])
+            finally:
+                shutil.rmtree(out, ignore_errors=True)
+            return {"tracks": added}
+
+        return asdict(jobs.submit(f"tool:{req.tool}", pid, work))
+
     # ---------- tempo ----------
 
     def detect_tempo(pid: str, track_name: str | None) -> dict:
@@ -364,13 +402,35 @@ def create_app(store: Store | None = None) -> FastAPI:
 
     @app.put("/api/projects/{pid}/tempo")
     def put_tempo(pid: str, req: TempoSetReq):
-        """Set the tempo by hand (typed, tapped, x2 / ÷2, or an alternative)."""
-        with store.edit(pid, "Change downbeat" if req.bpm is None else "Change tempo") as p:
+        """Adjust the tempo / grid by hand: bpm (typed, tapped, x2, ÷2), which beat is
+        beat 1, shift the grid, or anchor a bar start to a hit."""
+        label = ("Change tempo" if req.bpm is not None else "Set bar start" if req.anchor is not None
+                 else "Move beat grid" if req.shift is not None else "Change downbeat")
+        # Anchor on the actual attack near the chosen time, so a rough click lands on the hit.
+        at = None
+        if req.anchor is not None:
+            p0 = get_project(pid)
+            src = next((t for t in p0["tracks"] if t["name"] == (p0.get("tempo") or {}).get("track")), None)
+            at = req.anchor
+            if src:
+                y, sr = audio.read_mono(store.path(pid) / src["file"], sr=None,
+                                        start=max(0.0, req.anchor - 0.1), end=req.anchor + 0.1)
+                lo = max(0.0, req.anchor - 0.1)
+                i = int((req.anchor - lo) * sr)
+                at = lo + slicing.snap_to_attack(y, sr, i - int(0.06 * sr), i + int(0.06 * sr)) / sr
+        with store.edit(pid, label) as p:
             base = p.get("tempo") or {"bpm": req.bpm, "beats": [], "alternatives": [], "range": None}
             if req.bpm is not None:
                 base = tempo.rescale(base, req.bpm)
             if req.downbeat is not None:
                 base = {**base, "downbeat": req.downbeat}
+            if req.shift is not None:
+                base = tempo.shift(base, req.shift)
+            if at is not None:
+                try:
+                    base = tempo.anchor(base, at)
+                except ValueError as e:
+                    raise HTTPException(400, str(e))
             if base.get("bpm") is None:
                 raise HTTPException(400, "set a bpm first")
             p["tempo"] = base
@@ -445,23 +505,37 @@ def create_app(store: Store | None = None) -> FastAPI:
     @app.post("/api/projects/{pid}/kits")
     def build_kit(pid: str, req: KitReq):
         p = get_project(pid)
-        t = track_or_404(p, req.track)
+        sources = [track_or_404(p, n) for n in (req.tracks or [req.track])]
+        by_name = {t["name"]: t for t in sources}
         if req.mode not in ("drums", "chops", "phrases"):
             raise HTTPException(400, "mode must be drums, chops or phrases")
         folder = store.path(pid)
 
         def work(job: Job):
-            recs = kits.extract(folder, t, req.mode, req.sensitivity, req.similarity,
-                                req.max_per_category, kit_size=req.kit_size, progress=job.update)
+            recs = []
+            # Several tracks (split drum parts): judge every hit against the loudest part.
+            ref = max(float(np.abs(audio.read(folder / t["file"])[0]).max()) for t in sources) \
+                if len(sources) > 1 else None
+            for i, t in enumerate(sources):
+                def progress(f, m, i=i, t=t):
+                    prefix = f"{t['name']} ({i + 1}/{len(sources)}): " if len(sources) > 1 else ""
+                    job.update((i + f) / len(sources) * 0.95, prefix + m)
+                # A multi-track kit is trimmed to size once, across all tracks.
+                size = req.kit_size if len(sources) == 1 else None
+                recs += kits.extract(folder, t, req.mode, req.sensitivity, req.similarity,
+                                     req.max_per_category, kit_size=size, progress=progress, ref_peak=ref)
+            if req.kit_size and len(sources) > 1:
+                recs = kits.select_kit(recs, req.kit_size)
             job.update(0.96, f"Saving {len(recs)} samples…")
             step = "Build drum kit" if req.mode == "drums" else "Extract sound bits"
-            with store.edit(pid, f"{step} from {t['name']}") as proj:
+            where = sources[0]["name"] if len(sources) == 1 else f"{len(sources)} tracks"
+            with store.edit(pid, f"{step} from {where}") as proj:
                 if req.replace:
-                    old = [s for s in proj["samples"] if s.get("track") == t["name"] and s.get("origin") == req.mode]
+                    old = [s for s in proj["samples"] if s.get("track") in by_name and s.get("origin") == req.mode]
                     gone = {s["id"] for s in old}
                     proj["samples"] = [s for s in proj["samples"] if s["id"] not in gone]
                     proj["pads"] = [None if p in gone else p for p in proj["pads"]]
-                saved = [kits.save_sample(folder, proj, t, r) for r in recs]
+                saved = [kits.save_sample(folder, proj, by_name[r["track"]], r) for r in recs]
                 if req.load_pads:
                     proj["pads"] = kits.layout_pads(saved)
             return {"samples": [s["id"] for s in saved], "pads_loaded": req.load_pads}

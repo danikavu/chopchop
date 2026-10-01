@@ -85,6 +85,9 @@ export interface Model {
   id: string
   label: string
   stems: string[]
+  group?: string
+  note?: string
+  best_for?: string[]
   default?: boolean
 }
 
@@ -96,6 +99,7 @@ export interface Meta {
   separation: { available: boolean; reason: string | null }
   device: { device: 'cuda' | 'mps' | 'directml' | 'cpu'; name: string; hint: string | null } | null
   models: Model[]
+  tools: Record<string, { label: string; description: string; for: string }>
 }
 
 export interface ExportResult {

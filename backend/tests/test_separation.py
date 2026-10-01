@@ -35,3 +35,9 @@ def test_progress_capture_reports_passes_and_restores_tqdm():
 def test_device_info_shape():
     info = separation.device_info()
     assert info["device"] in {"cuda", "mps", "directml", "cpu"} and info["name"]
+
+
+def test_stem_name_uses_last_group():
+    assert separation.stem_name("song_(Vocals)_htdemucs_6s.wav") == "vocals"
+    assert separation.stem_name("song_(Instrumental)_vocals_mel_band_roformer_(Drums)_htdemucs_6s.wav") == "drums"
+    assert separation.stem_name("drums-ab12_(hh)_MDX23C-DrumSep.wav") == "hh"

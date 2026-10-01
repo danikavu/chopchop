@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../api'
 import { chokeGroupFor, preload, trigger } from '../padEngine'
 import type { ExportResult, Job, Sample, Track } from '../types'
-import { categoryColor, isDrumTrack, label, NOT_DRUMS_NOTE, useJob } from '../util'
+import { categoryColor, isDrumPart, isDrumTrack, isTextEntry, label, NOT_DRUMS_NOTE, useJob } from '../util'
 import { JobProgress } from './JobProgress'
 
 export const PADS_PER_BANK = 16
@@ -31,7 +31,11 @@ interface Props {
 
 export function DrumPads(p: Props) {
   const [bank, setBank] = useState(0)
-  const guessDrums = () => p.tracks.find((t) => t.name.includes('drum'))?.name ?? p.tracks[0]?.name ?? ''
+  // With a drum split, the isolated parts make the cleanest kit.
+  const ALL_PARTS = '__parts__'
+  const parts = p.tracks.filter((t) => isDrumPart(t.name)).map((t) => t.name)
+  const guessDrums = () =>
+    parts.length > 1 ? ALL_PARTS : p.tracks.find((t) => isDrumTrack(t.name))?.name ?? p.tracks[0]?.name ?? ''
   const [drumTrack, setDrumTrack] = useState(guessDrums)
   const userPicked = useRef(false)
   const [kitSize, setKitSize] = useState(16)
@@ -48,7 +52,8 @@ export function DrumPads(p: Props) {
   // Follow the drum stem once it appears (after separation / import), unless the
   // user chose a track themselves.
   useEffect(() => {
-    if (!userPicked.current || !p.tracks.some((t) => t.name === drumTrack)) setDrumTrack(guessDrums())
+    const valid = drumTrack === ALL_PARTS ? parts.length > 1 : p.tracks.some((t) => t.name === drumTrack)
+    if (!userPicked.current || !valid) setDrumTrack(guessDrums())
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [p.tracks])
 
@@ -74,7 +79,7 @@ export function DrumPads(p: Props) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.repeat || e.metaKey || e.ctrlKey || e.altKey) return
-      if ((e.target as HTMLElement).closest('input, select, textarea, [contenteditable]')) return
+      if (isTextEntry(e.target)) return
       if (document.querySelector('.modal')) return
       const n = PAD_KEYS.indexOf(e.key.toLowerCase())
       if (n < 0) return
@@ -124,8 +129,10 @@ export function DrumPads(p: Props) {
     const bankA = p.pads.slice(0, PADS_PER_BANK)
     if (bankA.some(Boolean) && !window.confirm('Replace the sounds on your pads with a new auto kit?')) return
     try {
+      const all = drumTrack === ALL_PARTS
       const j = await api.buildKit(p.pid, {
-        track: drumTrack,
+        track: all ? parts[0] : drumTrack,
+        tracks: all ? parts : undefined,
         mode: 'drums',
         sensitivity: 0.5,
         similarity: uniqueness,
@@ -248,12 +255,18 @@ export function DrumPads(p: Props) {
               userPicked.current = true
               setDrumTrack(e.target.value)
             }}>
+              {parts.length > 1 && <option value={ALL_PARTS}>All drum parts ({parts.length})</option>}
               {p.tracks.map((t) => (
                 <option key={t.name} value={t.name}>{label(t.name)}</option>
               ))}
             </select>
           </label>
-          {drumTrack && !isDrumTrack(drumTrack) && <div className="warn small note">{NOT_DRUMS_NOTE}</div>}
+          {drumTrack && drumTrack !== ALL_PARTS && !isDrumTrack(drumTrack) && (
+            <div className="warn small note">{NOT_DRUMS_NOTE}</div>
+          )}
+          {drumTrack !== ALL_PARTS && parts.length === 0 && p.tracks.some((t) => isDrumTrack(t.name)) && (
+            <p className="tip">Tip: ✦ → Split drums on the drum lane gives isolated kick / snare / hat parts for a cleaner kit.</p>
+          )}
           <label className="field">
             <span>Kit size</span>
             <select value={kitSize} onChange={(e) => setKitSize(Number(e.target.value))}>

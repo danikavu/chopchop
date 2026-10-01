@@ -24,6 +24,10 @@ interface Props {
   snapEdits: boolean
   onSnapEdits: (v: boolean) => void
   onDownbeat: (beatIndex: number) => void
+  onAnchor: () => void
+  onNudgeGrid: (seconds: number) => void
+  dragGrid: boolean
+  onDragGrid: (v: boolean) => void
 }
 
 const newId = () => Math.random().toString(16).slice(2, 12).padEnd(10, '0')
@@ -183,6 +187,25 @@ export function SlicePanel(p: Props) {
               <input type="checkbox" checked={p.snapEdits} onChange={(e) => p.onSnapEdits(e.target.checked)} />
               Snap while editing (drag, draw, split)
             </label>
+            <div className="grid-fix">
+              <div className="row">
+                <button onClick={p.onAnchor} title="Put the playhead on the hit where a bar really starts, then press this (or B)">
+                  Bar 1 at playhead <kbd>B</kbd>
+                </button>
+              </div>
+              <div className="field" title="Shift the whole grid in time: 10 ms per click, 1 ms with Shift">
+                <span>Shift grid</span>
+                <span className="row nudge">
+                  <button onClick={(e) => p.onNudgeGrid(e.shiftKey ? -0.001 : -0.01)}>◀</button>
+                  <span className="muted">{'10 ms · ⇧ 1 ms'}</span>
+                  <button onClick={(e) => p.onNudgeGrid(e.shiftKey ? 0.001 : 0.01)}>▶</button>
+                </span>
+              </div>
+              <label className="check">
+                <input type="checkbox" checked={p.dragGrid} onChange={(e) => p.onDragGrid(e.target.checked)} />
+                Drag grid (grab a red bar line on the waveforms)
+              </label>
+            </div>
             <div className="field" style={{ marginTop: 8 }} title="Which tracked beat is beat 1 of the bar (used by bar-sized grids)">
               <span>Bar starts at</span>
               <span className="row nudge">

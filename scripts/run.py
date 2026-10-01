@@ -119,6 +119,9 @@ def install_cuda_torch(py: Path) -> None:
 def install(args: argparse.Namespace) -> None:
     if sys.version_info < (3, 10):
         sys.exit(f"Python 3.10+ required (this is {platform.python_version()}).")
+    if sys.version_info >= (3, 14) and not args.no_separation:
+        print(f"Warning: stem separation (audio-separator) supports Python 3.10-3.13; this is "
+              f"{platform.python_version()}. If the install fails, use Python 3.13 or --no-separation.")
     if not venv_python().exists():
         print(f"› creating {VENV.name} with Python {platform.python_version()}")
         venv.create(VENV, with_pip=True)

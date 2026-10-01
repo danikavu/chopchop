@@ -263,3 +263,16 @@ def test_export_names_carry_bpm_and_key(client):
     names = zipfile.ZipFile(io.BytesIO(client.get(r["url"]).content)).namelist()
     assert f"k/bass/{loop['name']}_96bpm_{loop['key'].replace(' ', '')}.wav" in names, names
     assert any(n.startswith(f"k/kick/{shot['name']}") and "bpm" not in n for n in names), names
+
+
+def test_anchor_snaps_to_the_hit_near_the_playhead(client):
+    y, beats = synth.groove(bpm=100, bars=8)
+    pid = client.post("/api/projects", files={"file": ("g.wav", wav(y), "audio/wav")}).json()["id"]
+    client.post(f"/api/projects/{pid}/tracks", files={"file": ("Drums.wav", wav(y), "audio/wav")})
+    client.post(f"/api/projects/{pid}/tempo", json={})
+    client.put(f"/api/projects/{pid}/tempo", json={"shift": 0.08})  # knock the grid off
+    target = beats[9]  # a snare on beat 2 of bar 3 -> make it "beat 1"
+    t = client.put(f"/api/projects/{pid}/tempo", json={"anchor": target + 0.02}).json()  # rough click
+    bar_starts = t["beats"][t["downbeat"]::4]
+    assert min(abs(b - target) for b in bar_starts) < 0.006
+    assert client.get(f"/api/projects/{pid}/history").json()["undo"] == "Set bar start"

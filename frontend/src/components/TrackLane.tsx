@@ -19,6 +19,9 @@ export interface LaneEvents {
   onSelectSlice: (id: string | null) => void
   onToggleExport: (name: string) => void
   onDelete?: (name: string) => void
+  /** Stem tools (drum split, de-reverb, …), suitable ones listed first. */
+  tools?: { id: string; label: string; description: string; suggested: boolean }[]
+  onTool?: (track: string, tool: string) => void
 }
 
 interface Props extends LaneEvents {
@@ -32,8 +35,6 @@ interface Props extends LaneEvents {
   exportChecked: boolean
   timeline: boolean
   showScrollbar: boolean
-  beats?: number[]
-  downbeat?: number
 }
 
 export function TrackLane(props: Props) {
@@ -49,6 +50,7 @@ export function TrackLane(props: Props) {
   cb.current = props
   const [ready, setReady] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [toolsOpen, setToolsOpen] = useState(false)
 
   useEffect(() => {
     let ws: WaveSurfer | null = null
@@ -99,7 +101,6 @@ export function TrackLane(props: Props) {
         })
         regions.on('region-updated', (r) => cb.current.onSliceChange({ id: r.id, start: r.start, end: r.end }))
         regions.on('region-clicked', (r, e) => {
-          if (r.id.startsWith('beat-')) return // beat-grid markers aren't slices
           e.stopPropagation()
           cb.current.onFocus(track.name)
           cb.current.onSelectSlice(r.id)
@@ -152,21 +153,8 @@ export function TrackLane(props: Props) {
         minLength: 0.005,
       })
     }
-    // Beat grid: thin non-interactive markers, brighter on bar lines.
-    const down = props.downbeat ?? 0
-    props.beats?.forEach((b, i) => {
-      const bar = i >= down && (i - down) % 4 === 0
-      regions.addRegion({
-        id: `beat-${i}`,
-        start: b,
-        color: bar ? 'rgba(245, 158, 11, 0.75)' : 'rgba(255, 255, 255, 0.22)',
-        drag: false,
-        resize: false,
-      })
-    })
     syncing.current = false
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [slices, selectedId, ready, color, focused, props.beats, props.downbeat])
+  }, [slices, selectedId, ready, color, focused])
 
   return (
     <div className={`lane ${focused ? 'focused' : ''}`}>
@@ -180,6 +168,24 @@ export function TrackLane(props: Props) {
             <input type="checkbox" checked={exportChecked} onChange={() => props.onToggleExport(track.name)} />
             export
           </label>
+          {props.tools && props.tools.length > 0 && (
+            <span className="lane-tools">
+              <button className="icon-btn" title="Stem tools" onClick={() => setToolsOpen((o) => !o)}>✦</button>
+              {toolsOpen && (
+                <div className="lane-menu" onMouseLeave={() => setToolsOpen(false)}>
+                  {props.tools.map((t) => (
+                    <button key={t.id} onClick={() => {
+                      setToolsOpen(false)
+                      props.onTool?.(track.name, t.id)
+                    }}>
+                      <b>{t.label}</b>
+                      <span className="muted">{t.description}{t.suggested ? '' : ' · meant for other stems'}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </span>
+          )}
           {props.onDelete && (
             <button className="icon-btn" title="Remove stem" onClick={() => props.onDelete?.(track.name)}>
               ×

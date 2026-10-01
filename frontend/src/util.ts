@@ -51,8 +51,25 @@ export function isDrumTrack(name: string): boolean {
   return n.includes('drum') || n.includes('perc')
 }
 
+/** Tracks made by the "Split drums" tool: drums_kick, drums_snare, … (mirrors the backend). */
+export function isDrumPart(name: string): boolean {
+  return /_(kick|snare|toms|hihat|ride|crash)$/.test(name) && isDrumTrack(name)
+}
+
 export const NOT_DRUMS_NOTE =
   'Not a drum track: sounds are labelled and named by the track type (vocal_01, bass_01, …) instead of kick / snare / hat.'
+
+/**
+ * True when keys typed at `el` are text entry (text fields, selects, editable content);
+ * app shortcuts should leave those alone. Checkboxes, sliders and buttons don't count,
+ * so Ctrl+Z still undoes right after ticking a box or moving a slider.
+ */
+export function isTextEntry(el: EventTarget | null): boolean {
+  if (!(el instanceof HTMLElement)) return false
+  if (el.closest('textarea, select, [contenteditable]')) return true
+  const input = el.closest('input')
+  return !!input && !['checkbox', 'radio', 'range', 'button', 'submit', 'color', 'file'].includes(input.type)
+}
 
 export function label(s: string): string {
   return s.replace(/_/g, ' ')

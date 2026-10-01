@@ -76,6 +76,8 @@ export const api = {
 
   separate: (pid: string, body: { model: string; stems: string[] | null; rest: boolean; replace: boolean }) =>
     req<Job>('POST', `${P(pid)}/separate`, body),
+  runTool: (pid: string, track: string, tool: string) =>
+    req<Job>('POST', `${P(pid)}/tracks/${enc(track)}/tool`, { tool }),
   job: (jid: string) => req<Job>('GET', `/api/jobs/${jid}`),
   projectJobs: (pid: string) => req<Job[]>('GET', `${P(pid)}/jobs`),
 
@@ -108,6 +110,7 @@ export const api = {
       max_per_category: number
       kit_size?: number
       load_pads?: boolean
+      tracks?: string[]
     },
   ) => req<Job>('POST', `${P(pid)}/kits`, body),
 
@@ -124,7 +127,7 @@ export const api = {
   samplePeaks: (pid: string, s: Sample, n = 160) =>
     req<{ duration: number; peaks: number[] }>('GET', `${P(pid)}/samples/${s.id}/peaks?n=${n}&v=${s.start}-${s.end}`),
   detectTempo: (pid: string, track?: string) => req<Tempo>('POST', `${P(pid)}/tempo`, { track }),
-  setTempo: (pid: string, body: { bpm?: number; downbeat?: number }) => req<Tempo>('PUT', `${P(pid)}/tempo`, body),
+  setTempo: (pid: string, body: { bpm?: number; downbeat?: number; shift?: number; anchor?: number }) => req<Tempo>('PUT', `${P(pid)}/tempo`, body),
   savePads: (pid: string, pads: (string | null)[], label?: string) =>
     req<{ pads: (string | null)[] }>('PUT', `${P(pid)}/pads`, { pads, label }),
   history: (pid: string) => req<UndoState>('GET', `${P(pid)}/history`),

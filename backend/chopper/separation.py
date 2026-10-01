@@ -16,30 +16,115 @@ import numpy as np
 
 from .store import data_dir
 
+# SDR figures (dB, higher = cleaner) are audio-separator's published scores.
 MODELS = [
     {
         "id": "htdemucs_6s.yaml",
         "label": "Demucs 6-stem",
+        "group": "Multi-stem",
         "stems": ["vocals", "drums", "bass", "guitar", "piano", "other"],
+        "note": "the only model with guitar and piano",
         "default": True,
     },
     {
         "id": "htdemucs_ft.yaml",
-        "label": "Demucs 4-stem fine-tuned (best, slow)",
+        "label": "Demucs 4-stem fine-tuned",
+        "group": "Multi-stem",
         "stems": ["vocals", "drums", "bass", "other"],
+        "note": "best drums (10.0 dB) · slow",
+        "best_for": ["drums"],
         "bag": 4,  # averages 4 models, each run separately
     },
     {
-        "id": "htdemucs.yaml",
-        "label": "Demucs 4-stem (fast)",
+        "id": "hdemucs_mmi.yaml",
+        "label": "Demucs MMI",
+        "group": "Multi-stem",
         "stems": ["vocals", "drums", "bass", "other"],
+        "note": "best bass (12.2 dB)",
+        "best_for": ["bass"],
+    },
+    {
+        "id": "htdemucs.yaml",
+        "label": "Demucs 4-stem",
+        "group": "Multi-stem",
+        "stems": ["vocals", "drums", "bass", "other"],
+        "note": "fastest",
+    },
+    {
+        "id": "two_stage_6s",
+        "label": "Two-stage: Mel-Band vocals → Demucs 6-stem",
+        "group": "Two-stage (cleanest)",
+        "stems": ["vocals", "drums", "bass", "guitar", "piano", "other"],
+        "stages": ["vocals_mel_band_roformer.ckpt", "htdemucs_6s.yaml"],
+        "note": "best vocals, then 6 stems from the instrumental · slow",
+    },
+    {
+        "id": "two_stage_ft",
+        "label": "Two-stage: Mel-Band vocals → Demucs fine-tuned",
+        "group": "Two-stage (cleanest)",
+        "stems": ["vocals", "drums", "bass", "other"],
+        "stages": ["vocals_mel_band_roformer.ckpt", "htdemucs_ft.yaml"],
+        "note": "best vocals + best drums/bass · slowest",
+    },
+    {
+        "id": "vocals_mel_band_roformer.ckpt",
+        "label": "Mel-Band Roformer",
+        "group": "Vocals / instrumental",
+        "stems": ["vocals", "instrumental"],
+        "aliases": {"other": "instrumental"},  # the model calls the backing track "other"
+        "note": "best vocals (12.6 dB) · slow",
+        "best_for": ["vocals"],
     },
     {
         "id": "model_bs_roformer_ep_317_sdr_12.9755.ckpt",
-        "label": "BS-Roformer vocals / instrumental",
+        "label": "BS-Roformer",
+        "group": "Vocals / instrumental",
         "stems": ["vocals", "instrumental"],
+        "note": "vocals 11.8 dB, instrumental 16.5 dB",
+    },
+    {
+        "id": "Kim_Vocal_2.onnx",
+        "label": "MDX-Net Kim Vocal 2",
+        "group": "Vocals / instrumental",
+        "stems": ["vocals", "instrumental"],
+        "note": "classic UVR vocal model (10.2 dB) · fast",
+        "passes": 2,
+    },
+    {
+        "id": "UVR-MDX-NET-Inst_HQ_4.onnx",
+        "label": "MDX-Net Inst HQ 4",
+        "group": "Vocals / instrumental",
+        "stems": ["vocals", "instrumental"],
+        "note": "cleanest MDX instrumental (15.5 dB) · fast",
+        "passes": 2,
     },
 ]
+
+# Tools that run on one existing stem. "outputs" maps the model's stem names to the
+# suffix of the new tracks, e.g. drums -> drums_kick, drums_snare, …
+TOOLS = {
+    "drumsep": {
+        "model": "MDX23C-DrumSep-aufr33-jarredou.ckpt",
+        "label": "Split drums",
+        "description": "kick, snare, toms, hi-hat, ride, crash",
+        "for": "drums",
+        "outputs": {"kick": "kick", "snare": "snare", "toms": "toms", "hh": "hihat", "ride": "ride", "crash": "crash"},
+    },
+    "dereverb": {
+        "model": "dereverb_mel_band_roformer_anvuew_sdr_19.1729.ckpt",
+        "label": "Remove reverb",
+        "description": "dry version + the reverb on its own",
+        "for": "vocals",
+        "outputs": {"noreverb": "dry", "reverb": "reverb"},
+    },
+    "karaoke": {
+        "model": "mel_band_roformer_karaoke_aufr33_viperx_sdr_10.1956.ckpt",
+        "label": "Lead / backing vocals",
+        "description": "main vocal and the harmonies / ad-libs",
+        "for": "vocals",
+        "outputs": {"vocals": "lead", "instrumental": "backing"},
+    },
+}
 
 Progress = Callable[[float, str], None]
 
@@ -98,9 +183,11 @@ def model_dir() -> Path:
 
 
 def stem_name(filename: str) -> str:
-    """'song_(Vocals)_htdemucs_6s.wav' -> 'vocals'."""
-    m = re.search(r"_\(([^)]+)\)", filename)
-    return (m.group(1) if m else Path(filename).stem).strip().lower().replace(" ", "_")
+    """'song_(Vocals)_htdemucs_6s.wav' -> 'vocals'. The last "(...)" wins: in a second
+    stage the input is already named 'song_(Instrumental)_…', so outputs look like
+    'song_(Instrumental)_vocals_mel_band_roformer_(Drums)_htdemucs_6s.wav'."""
+    groups = re.findall(r"_\(([^)]+)\)", filename)
+    return (groups[-1] if groups else Path(filename).stem).strip().lower().replace(" ", "_")
 
 
 # Overall progress ranges for each phase (the caller maps 0.9-1.0 to importing stems).
@@ -134,6 +221,8 @@ class _ProgressCapture:
     def _report(self, bar) -> None:
         total = bar.total or 0
         if getattr(bar, "unit", "") == "iB":  # model download
+            if total and total < 1_000_000:
+                return  # a small config file; not worth a message
             frac = bar.n / total if total else 0.0
             mb = f"{bar.n / 1e6:.0f}/{total / 1e6:.0f} MB" if total else f"{bar.n / 1e6:.0f} MB"
             self.emit(DOWNLOAD[0] + (DOWNLOAD[1] - DOWNLOAD[0]) * frac, f"Downloading model · {mb}")
@@ -216,18 +305,24 @@ def _demucs_passes(sep, model: str) -> int:
     return bag * shifts
 
 
-def separate(src: Path, out_dir: Path, model: str, on_progress: Progress | None = None) -> dict[str, Path]:
-    st = status()
-    if not st["available"]:
-        raise SeparationUnavailable(st["reason"])
-    if model not in {m["id"] for m in MODELS}:
-        raise ValueError(f"unknown model: {model}")
-    emit = on_progress or (lambda _p, _m: None)
+def _info(model: str) -> dict:
+    """Catalogue entry for a model id (separation models and stem-tool models)."""
+    for m in MODELS:
+        if m["id"] == model:
+            return m
+    for t in TOOLS.values():
+        if t["model"] == model:
+            return t
+    return {}
 
+
+def _run_model(src: Path, out_dir: Path, model: str, emit: Progress) -> dict[str, Path]:
+    """Run one audio-separator model on src; returns {stem name: file}. Caller holds _lock."""
     from audio_separator.separator import Separator
 
     out_dir.mkdir(parents=True, exist_ok=True)
     is_demucs = model.endswith(".yaml")
+    info = _info(model)
 
     def run(force_cpu: bool) -> list[str]:
         emit(0.02, "Preparing model (downloads on first use)…")
@@ -248,32 +343,82 @@ def separate(src: Path, out_dir: Path, model: str, on_progress: Progress | None 
         with gpu_fix, _ProgressCapture(emit, device) as cap:
             sep.load_model(model_filename=model)
             cap.emit(SEPARATE[0], f"Model loaded · separating on {device}…")
-            if is_demucs:
-                cap.passes = _demucs_passes(sep, model)
+            cap.passes = _demucs_passes(sep, model) if is_demucs else info.get("passes", 1)
             files = sep.separate(str(src))
         emit(SEPARATE[1], "Writing stems…")
         return files
 
-    with _lock:
-        try:
-            files = run(force_cpu=False)
-        except (RuntimeError, NotImplementedError) as e:
-            # GPU trouble (unsupported op, out of memory): retry on CPU rather than fail.
-            msg = str(e).lower()
-            if not any(k in msg for k in ("mps", "cuda", "out of memory", "directml")):
-                raise
-            emit(0.02, "GPU failed, retrying on CPU…")
-            files = run(force_cpu=True)
+    try:
+        files = run(force_cpu=False)
+    except (RuntimeError, NotImplementedError) as e:
+        # GPU trouble (unsupported op, out of memory): retry on CPU rather than fail.
+        msg = str(e).lower()
+        if not any(k in msg for k in ("mps", "cuda", "out of memory", "directml")):
+            raise
+        emit(0.02, "GPU failed, retrying on CPU…")
+        files = run(force_cpu=True)
 
+    aliases = info.get("aliases", {})
     stems: dict[str, Path] = {}
     for f in files:
         p = Path(f)
         if not p.is_absolute():
             p = out_dir / p
-        stems[stem_name(p.name)] = p
+        name = stem_name(p.name)
+        stems[aliases.get(name, name)] = p
     if not stems:
         raise RuntimeError("separation produced no stems")
     return stems
+
+
+def _stage_emit(emit: Progress, i: int, n: int, label: str) -> Progress:
+    """Map a single model's progress (0.02-0.88) into stage i of n, prefixing messages."""
+    lo, hi = 0.02, SEPARATE[1]
+
+    def stage(p: float, msg: str) -> None:
+        frac = min(1.0, max(0.0, (p - lo) / (hi - lo)))
+        emit(lo + (i + frac) / n * (hi - lo), f"Stage {i + 1}/{n} · {label}: {msg}")
+
+    return stage
+
+
+def separate(src: Path, out_dir: Path, model: str, on_progress: Progress | None = None) -> dict[str, Path]:
+    st = status()
+    if not st["available"]:
+        raise SeparationUnavailable(st["reason"])
+    entry = _info(model)
+    if not entry or entry not in MODELS:
+        raise ValueError(f"unknown model: {model}")
+    emit = on_progress or (lambda _p, _m: None)
+
+    with _lock:
+        stages = entry.get("stages")
+        if not stages:
+            return _run_model(src, out_dir, model, emit)
+        # Two-stage: the vocal model first, then the multi-stem model on the
+        # instrumental, where no vocals are left to confuse it.
+        first, second = stages
+        vox = _run_model(src, out_dir / "stage1", first,
+                         _stage_emit(emit, 0, 2, f"vocals ({_info(first)['label']})"))
+        rest = _run_model(vox["instrumental"], out_dir / "stage2", second,
+                          _stage_emit(emit, 1, 2, f"instrumental ({_info(second)['label']})"))
+        # The second model's own "vocals" is only leftover bleed; the first model's wins.
+        return {"vocals": vox["vocals"], **{k: v for k, v in rest.items() if k != "vocals"}}
+
+
+def run_tool(src: Path, out_dir: Path, tool: str, on_progress: Progress | None = None) -> dict[str, Path]:
+    """Run a stem tool (drum split, de-reverb, lead/backing) on one track; returns
+    {suffix: file}, e.g. {"kick": …, "snare": …} or {"dry": …, "reverb": …}."""
+    st = status()
+    if not st["available"]:
+        raise SeparationUnavailable(st["reason"])
+    if tool not in TOOLS:
+        raise ValueError(f"unknown tool: {tool}")
+    t = TOOLS[tool]
+    with _lock:
+        stems = _run_model(src, out_dir, t["model"], on_progress or (lambda _p, _m: None))
+    names = t["outputs"]
+    return {names[k]: stems[k] for k in names if k in stems}
 
 
 def rest_name(keep: list[str]) -> str:
