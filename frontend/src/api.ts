@@ -1,4 +1,17 @@
-import type { ExportResult, Job, Meta, Project, ProjectSummary, Sample, Slice, Tempo, Track } from './types'
+import type {
+  BatchJob,
+  ExportResult,
+  FolderListing,
+  Job,
+  Meta,
+  Project,
+  ProjectSummary,
+  Sample,
+  Slice,
+  Tempo,
+  Track,
+  Workflow,
+} from './types'
 
 export interface UndoState {
   undo: string | null
@@ -79,6 +92,16 @@ export const api = {
   runTool: (pid: string, track: string, tool: string) =>
     req<Job>('POST', `${P(pid)}/tracks/${enc(track)}/tool`, { tool }),
   job: (jid: string) => req<Job>('GET', `/api/jobs/${jid}`),
+  cancelJob: (jid: string) => req('POST', `/api/jobs/${jid}/cancel`),
+
+  listFolder: (path?: string) => req<FolderListing>('GET', `/api/fs${path ? `?path=${enc(path)}` : ''}`),
+  workflows: () => req<{ presets: Workflow[]; saved: Workflow[]; default_output: string }>('GET', '/api/workflows'),
+  saveWorkflow: (wf: Workflow) => req<{ saved: Workflow[] }>('PUT', '/api/workflows', wf),
+  deleteWorkflow: (name: string) => req<{ saved: Workflow[] }>('DELETE', `/api/workflows/${enc(name)}`),
+  startBatch: (body: { input_dir: string; files?: string[]; recursive: boolean; output_dir?: string; workflow: Workflow }) =>
+    req<BatchJob>('POST', '/api/batches', body),
+  batches: () => req<BatchJob[]>('GET', '/api/batches'),
+  reveal: (path: string) => req('POST', '/api/reveal', { path }),
   projectJobs: (pid: string) => req<Job[]>('GET', `${P(pid)}/jobs`),
 
   detectSlices: (

@@ -33,6 +33,11 @@ export function ProjectList({ onOpen }: { onOpen: (pid: string) => void }) {
         <p className="muted">Slice tracks and stems, build drum kits, cut sound bits.</p>
       </div>
 
+      <button className="batch-link" onClick={() => (location.hash = '#/batch')}>
+        <strong>Batch a whole folder →</strong>
+        <span className="muted">e.g. an album: a drum kit per song, or all vocal + bass stems</span>
+      </button>
+
       <label
         className={`drop ${drag ? 'over' : ''}`}
         onDragOver={(e) => {

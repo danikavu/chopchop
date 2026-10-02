@@ -177,6 +177,36 @@ lighter engine without PyTorch. You can then import stems you already have (e.g.
    set the key of each sample, trim it (✂), or re-detect its key (♪). **Export kit** zips the
    samples currently shown as `kit/<category>/<name>_<key>.wav`.
 
+### Batch: a whole folder at once
+
+**Batch a whole folder →** on the home page runs a workflow over every track in a folder,
+for example an album → a drum kit per song.
+
+1. **Input folder:** browse to it, then untick any tracks to skip. Optionally include
+   subfolders.
+2. **Workflow:** start from a preset and change any step, or save your own:
+
+   | Preset | What it does |
+   |---|---|
+   | Drum kit per song | best-drums Demucs → keep drums → split drums → 16-pad kit from the parts → export the kit |
+   | Vocals + bass stems | two-stage separation, keep vocals and bass → export the stems |
+   | All stems | two-stage 6-stem separation → export every stem |
+   | Stems + samples | all stems + 16-pad kit from the split drums + vocal and bass chops |
+   | Acapellas | best vocal model → de-reverbed acapella + instrumental |
+
+   The steps are **Separate** (model, stems, remainder) → **Stem tools** (any tool on any
+   stem) → **Analyse** (tempo, song key) → **Drum kit** (source, size, uniqueness) →
+   **Sound bits** (stems, chops/phrases, how many) → **Export** (which stems, original
+   mix, kit, sound bits, BPM/key in names, normalize). You can also choose whether to
+   keep each song as a Chopper project to fine-tune later.
+3. **Output folder:** optional; the default is Chopper's data folder. Each run makes
+   `<output>/<folder> – <date>/<song>/{stems,kit,samples}/` plus a `chopper-batch.json`
+   summary.
+
+Songs run one after another, with per-song progress. A file that fails is reported and
+the batch moves on to the next one. **Cancel** stops between steps, and **open** /
+**folder** jump to a song's project or its files.
+
 ### Export file names
 
 Every export uses `<name>[_<bpm>bpm][_<key>].wav`:
