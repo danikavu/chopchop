@@ -6,6 +6,7 @@ import contextlib
 import functools
 import importlib.util
 import logging
+import os
 import platform
 import re
 import shutil
@@ -176,7 +177,8 @@ def device_info() -> dict:
     except ImportError:
         return {"device": "cpu", "name": "CPU", "hint": None}
     if torch.cuda.is_available():
-        return {"device": "cuda", "name": torch.cuda.get_device_name(0), "hint": None}
+        vram = torch.cuda.get_device_properties(0).total_memory / 1024 ** 3
+        return {"device": "cuda", "name": f"{torch.cuda.get_device_name(0)} · {vram:.0f} GB", "hint": None}
     if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
         return {"device": "mps", "name": "Apple GPU (Metal)", "hint": None}
     if _has("torch_directml"):
@@ -295,6 +297,65 @@ class _ProgressCapture:
         return False
 
 
+# audio-separator's defaults for these architectures; only batch_size is changed.
+MDX_DEFAULTS = {"hop_length": 1024, "segment_size": 256, "overlap": 0.25, "batch_size": 1, "enable_denoise": False}
+MDXC_DEFAULTS = {"segment_size": 256, "override_model_segment_size": False, "batch_size": 1, "overlap": None,
+                 "pitch_shift": 0}
+
+
+def gpu_tuning(force_cpu: bool = False, batch: int | None = None) -> dict:
+    """How hard to drive the GPU for one run.
+
+    On NVIDIA (CUDA), separate memory sits idle at audio-separator's default of one
+    chunk per call, so the batch is sized from the *free* VRAM right now (Roformer /
+    MDX23C ~1 GB per chunk after a 2 GB reserve; MDX-Net ~0.5 GB per chunk), and fp16
+    is used on cards with tensor cores (RTX / compute capability 7+; it's slower on
+    GTX 10xx). Apple GPUs share memory with the CPU and gain nothing from batching
+    (measured: identical output, no speed-up), so they stay at 1. Demucs has no batch
+    setting: it always works through one ~7.8 s segment at a time.
+
+    Overrides: CHOPPER_GPU_BATCH=N, CHOPPER_FP16=0/1. batch: forced (OOM retries).
+    """
+    plain = {"mdx_batch": 1, "mdxc_batch": 1, "fp16": False, "label": ""}
+    if force_cpu:
+        return plain
+    try:
+        import torch
+    except ImportError:
+        return plain
+    if not torch.cuda.is_available():
+        return plain
+    free, _total = torch.cuda.mem_get_info()
+    free_gb = free / 1024 ** 3
+    env_batch = os.environ.get("CHOPPER_GPU_BATCH")
+    if batch is None and env_batch and env_batch.isdigit():
+        batch = max(1, int(env_batch))
+    mdxc = batch or max(1, min(8, int((free_gb - 2.0) / 1.0)))
+    mdx = batch or max(1, min(16, int((free_gb - 1.0) / 0.5)))
+    env_fp16 = os.environ.get("CHOPPER_FP16")
+    fp16 = env_fp16 == "1" if env_fp16 in ("0", "1") else torch.cuda.get_device_capability(0)[0] >= 7
+    label = f"batch {mdxc}/{mdx}" + (" · fp16" if fp16 else "") + f" · {free_gb:.1f} GB free"
+    return {"mdx_batch": mdx, "mdxc_batch": mdxc, "fp16": fp16, "label": label}
+
+
+def _is_oom(msg: str) -> bool:
+    return any(k in msg for k in ("out of memory", "failed to allocate", "cudnn_status_alloc_failed",
+                                  "cublas_status_alloc_failed"))
+
+
+def _free_gpu_memory() -> None:
+    try:
+        import gc
+
+        import torch
+
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except ImportError:
+        pass
+
+
 def _mps_long_conv():
     from .mps_compat import mps_long_conv  # imports torch; only needed on Apple GPUs
 
@@ -340,8 +401,9 @@ def _run_model(src: Path, out_dir: Path, model: str, emit: Progress) -> dict[str
     is_demucs = model.endswith(".yaml")
     info = _info(model)
 
-    def run(force_cpu: bool) -> list[str]:
+    def run(force_cpu: bool, batch: int | None) -> list[str]:
         emit(0.02, "Preparing model (downloads on first use)…")
+        tuning = gpu_tuning(force_cpu, batch)
         sep = Separator(
             output_dir=str(out_dir),
             model_file_dir=str(model_dir()),
@@ -349,10 +411,15 @@ def _run_model(src: Path, out_dir: Path, model: str, emit: Progress) -> dict[str
             use_soundfile=True,  # write WAVs directly instead of through pydub/ffmpeg
             use_directml=_has("torch_directml"),  # AMD/Intel GPUs on Windows, if installed
             log_level=logging.ERROR if QUIET else logging.INFO,
+            use_autocast=tuning["fp16"],
+            mdx_params={**MDX_DEFAULTS, "batch_size": tuning["mdx_batch"]},
+            mdxc_params={**MDXC_DEFAULTS, "batch_size": tuning["mdxc_batch"]},
         )
         if force_cpu:
             sep.torch_device = sep.torch_device_cpu
         device = _device_label(sep)
+        if tuning["label"]:
+            device += f" · {tuning['label']}"
         on_mps = getattr(sep.torch_device, "type", "") == "mps"
         # Demucs' long convolutions exceed an MPS size limit; mps_long_conv computes
         # them in chunks (identical results, ~6x faster than CPU on an M-series Mac).
@@ -365,15 +432,30 @@ def _run_model(src: Path, out_dir: Path, model: str, emit: Progress) -> dict[str
         emit(SEPARATE[1], "Writing stems…")
         return files
 
-    try:
-        files = run(force_cpu=False)
-    except (RuntimeError, NotImplementedError) as e:
-        # GPU trouble (unsupported op, out of memory): retry on CPU rather than fail.
-        msg = str(e).lower()
-        if not any(k in msg for k in ("mps", "cuda", "out of memory", "directml")):
-            raise
-        emit(0.02, "GPU failed, retrying on CPU…")
-        files = run(force_cpu=True)
+    batch = None  # None = sized from free GPU memory
+    while True:
+        try:
+            files = run(force_cpu=False, batch=batch)
+            break
+        except Exception as e:  # noqa: BLE001 - classified below
+            msg = str(e).lower()
+            oom = _is_oom(msg)
+            if oom:
+                _free_gpu_memory()
+                current = batch or gpu_tuning()["mdxc_batch"]
+                if current > 1:
+                    # Too ambitious for this card / this model: same GPU, smaller batch.
+                    batch = max(1, current // 2)
+                    emit(0.02, f"GPU memory full, retrying with batch {batch}…")
+                    continue
+            gpu_error = oom or (isinstance(e, (RuntimeError, NotImplementedError))
+                                and any(k in msg for k in ("mps", "cuda", "directml")))
+            if not gpu_error:
+                raise
+            # GPU trouble (unsupported op, out of memory at batch 1): finish on CPU rather than fail.
+            emit(0.02, "GPU failed, retrying on CPU…")
+            files = run(force_cpu=True, batch=1)
+            break
 
     aliases = info.get("aliases", {})
     stems: dict[str, Path] = {}
