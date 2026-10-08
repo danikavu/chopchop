@@ -15,12 +15,16 @@ from .store import new_id
 log = logging.getLogger(__name__)
 
 
+class Cancelled(Exception):
+    """Raised inside a job when the user asked to stop it."""
+
+
 @dataclass
 class Job:
     id: str
     kind: str
     project_id: str
-    status: str = "pending"  # pending | running | done | error
+    status: str = "pending"  # pending | running | done | error | cancelled
     progress: float = 0.0
     message: str = ""
     result: Any = None
@@ -28,12 +32,19 @@ class Job:
     created_at: float = field(default_factory=time.time)
     started_at: float | None = None
     finished_at: float | None = None
+    detail: Any = None  # live, job-specific state (e.g. per-song status of a batch)
+    cancel_requested: bool = False
 
     def update(self, progress: float | None = None, message: str | None = None) -> None:
         if progress is not None:
             self.progress = max(0.0, min(1.0, progress))
         if message is not None:
             self.message = message
+
+    def check_cancel(self) -> None:
+        """Call between steps of long work: stops the job if Cancel was pressed."""
+        if self.cancel_requested:
+            raise Cancelled()
 
 
 class JobRunner:
@@ -54,6 +65,9 @@ class JobRunner:
                 job.result = fn(job)
                 job.progress = 1.0
                 job.status = "done"
+            except Cancelled:
+                job.status = "cancelled"
+                job.message = "Cancelled"
             except Exception as exc:  # surfaced to the UI
                 log.error("job %s failed:\n%s", job.id, traceback.format_exc())
                 job.error = str(exc) or exc.__class__.__name__
@@ -66,6 +80,17 @@ class JobRunner:
 
     def get(self, jid: str) -> Job | None:
         return self._jobs.get(jid)
+
+    def cancel(self, jid: str) -> bool:
+        job = self._jobs.get(jid)
+        if not job or job.status not in ("pending", "running"):
+            return False
+        job.cancel_requested = True
+        return True
+
+    def of_kind(self, prefix: str) -> list[dict]:
+        return [asdict(j) for j in sorted(self._jobs.values(), key=lambda j: -j.created_at)
+                if j.kind.startswith(prefix)]
 
     def for_project(self, pid: str) -> list[dict]:
         return [asdict(j) for j in self._jobs.values() if j.project_id == pid]

@@ -3,21 +3,23 @@
 from __future__ import annotations
 
 import mimetypes
+import platform
 import re
+import subprocess
 import shutil
 import tempfile
 from dataclasses import asdict
 from pathlib import Path
 from urllib.parse import quote
 
-import numpy as np
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import analysis, audio, kits, separation, slicing, tempo
+from . import analysis, audio, kits, separation, slicing, tempo, workflows
 from .jobs import Job, JobRunner
+from .service import Chopper
 from .store import PAD_SLOTS, ProjectNotFound, Store, find_sample, find_track, new_id, safe_name
 
 FRONTEND_DIST = Path(__file__).resolve().parents[2] / "frontend" / "dist"
@@ -121,8 +123,21 @@ class ExportKitReq(BaseModel):
     from_pads: bool = False  # export what's on the pads, named A01_…, B02_…
 
 
+class BatchReq(BaseModel):
+    input_dir: str
+    files: list[str] | None = None  # subset of the folder's audio files (names); None = all
+    recursive: bool = False
+    output_dir: str | None = None  # default: <data>/batches
+    workflow: workflows.Workflow
+
+
+class RevealReq(BaseModel):
+    path: str
+
+
 def create_app(store: Store | None = None) -> FastAPI:
     store = store or Store()
+    svc = Chopper(store)
     jobs = JobRunner()
     app = FastAPI(title="Chopper")
 
@@ -157,20 +172,8 @@ def create_app(store: Store | None = None) -> FastAPI:
         except KeyError as e:
             raise HTTPException(404, str(e))
 
-    def add_track(pid: str, name: str, kind: str, src: Path, label: str | None = None) -> dict:
-        folder = store.path(pid)
-        fname = safe_name(name)
-        # A fresh file per import: re-importing a stem must not overwrite audio that
-        # an undo step still points to.
-        rel = f"tracks/{fname}-{new_id()[:6]}.wav"
-        meta = audio.import_audio(src, folder / rel)
-        track = {"name": fname, "kind": kind, "file": rel, **meta}
-        with store.edit(pid, label) as p:
-            p["tracks"] = [t for t in p["tracks"] if t["name"] != fname] + [track]
-            if kind == "mix":
-                p["duration"] = meta["duration"]
-                p["sample_rate"] = meta["sample_rate"]
-        return track
+    add_track = svc.add_track
+    detect_tempo = svc.detect_tempo
 
     async def save_upload(file: UploadFile) -> Path:
         suffix = Path(file.filename or "audio").suffix or ".wav"
@@ -193,7 +196,8 @@ def create_app(store: Store | None = None) -> FastAPI:
             "separation": separation.status(),
             "device": separation.device_info() if separation.status()["available"] else None,
             "models": separation.MODELS,
-            "tools": {k: {x: v[x] for x in ("label", "description", "for")} for k, v in separation.TOOLS.items()},
+            "tools": {k: {**{x: v[x] for x in ("label", "description", "for")}, "outputs": list(v["outputs"].values())}
+                      for k, v in separation.TOOLS.items()},
         }
 
     # ---------- projects ----------
@@ -205,15 +209,12 @@ def create_app(store: Store | None = None) -> FastAPI:
     @app.post("/api/projects")
     async def create_project(file: UploadFile = File(...), name: str = Form("")):
         tmp = await save_upload(file)
-        project = store.create(name or Path(file.filename or "Untitled").stem)
         try:
-            add_track(project["id"], "mix", "mix", tmp)
-        except Exception as e:
-            store.delete(project["id"])
-            raise HTTPException(400, f"could not read audio: {e}")
+            return svc.create_project(tmp, name or Path(file.filename or "Untitled").stem)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
         finally:
             tmp.unlink(missing_ok=True)
-        return store.get(project["id"])
 
     @app.get("/api/projects/{pid}")
     def project(pid: str):
@@ -306,48 +307,14 @@ def create_app(store: Store | None = None) -> FastAPI:
 
     @app.post("/api/projects/{pid}/separate")
     def separate(pid: str, req: SeparateReq):
-        p = get_project(pid)
-        st = separation.status()
-        if not st["available"]:
-            raise HTTPException(400, st["reason"])
-        mix = next(t for t in p["tracks"] if t["kind"] == "mix")
-        folder = store.path(pid)
-        model = next((m for m in separation.MODELS if m["id"] == req.model), None)
-        if model is None:
-            raise HTTPException(400, f"unknown model: {req.model}")
-        keep = [x for x in model["stems"] if req.stems is None or x in req.stems]
-        unknown = set(req.stems or []) - set(model["stems"])
-        if unknown:
-            raise HTTPException(400, f"{model['label']} doesn't make: {', '.join(sorted(unknown))}")
-        if not keep:
-            raise HTTPException(400, "pick at least one stem")
+        get_project(pid)
+        try:
+            svc.check_separate(req.model, req.stems)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
 
         def work(job: Job):
-            out = folder / "separation" / new_id()
-            try:
-                stems = separation.separate(folder / mix["file"], out, req.model, job.update)
-                if set(keep) < set(stems):
-                    dropped = [n for n in stems if n not in keep]
-                    job.update(0.89, f"Mixing {', '.join(dropped)} into {separation.rest_name(keep)}…"
-                               if req.rest else f"Keeping {', '.join(keep)}…")
-                stems = separation.combine(stems, keep, req.rest, out)
-                # Lanes in the model's usual order (vocals, drums, bass, …), remainder last.
-                order = model["stems"]
-                stems = dict(sorted(stems.items(), key=lambda kv: order.index(kv[0]) if kv[0] in order else 99))
-                added = []
-                with store.undo_group(pid, "Separate stems"):
-                    if req.replace:
-                        with store.edit(pid) as proj:
-                            proj["tracks"] = [t for t in proj["tracks"] if t["kind"] != "stem"]
-                    for i, (name, path) in enumerate(stems.items()):
-                        job.update(0.9 + 0.1 * i / len(stems), f"Importing stem {i + 1}/{len(stems)}: {name}")
-                        added.append(add_track(pid, name, "stem", path)["name"])
-                    if any(analysis.is_drum_track(n) for n in added):
-                        job.update(0.99, "Estimating tempo from the drums…")
-                        detect_tempo(pid, None)
-            finally:
-                shutil.rmtree(out, ignore_errors=True)
-            return {"tracks": added}
+            return {"tracks": svc.separate(pid, req.model, req.stems, req.rest, req.replace, job.update)}
 
         return asdict(jobs.submit("separate", pid, work))
 
@@ -355,50 +322,25 @@ def create_app(store: Store | None = None) -> FastAPI:
 
     @app.post("/api/projects/{pid}/tracks/{name}/tool")
     def run_tool(pid: str, name: str, req: ToolReq):
-        p = get_project(pid)
-        t = track_or_404(p, name)
-        if req.tool not in separation.TOOLS:
-            raise HTTPException(400, f"unknown tool: {req.tool}")
-        st = separation.status()
-        if not st["available"]:
-            raise HTTPException(400, st["reason"])
-        tool = separation.TOOLS[req.tool]
-        folder = store.path(pid)
+        track_or_404(get_project(pid), name)
+        try:
+            svc.check_tool(req.tool)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
 
         def work(job: Job):
-            out = folder / "separation" / new_id()
-            try:
-                parts = separation.run_tool(folder / t["file"], out, req.tool, job.update)
-                added = []
-                with store.undo_group(pid, f"{tool['label']} ({name})"):
-                    for i, (suffix, path) in enumerate(parts.items()):
-                        job.update(0.9 + 0.1 * i / len(parts), f"Importing {name}_{suffix}")
-                        added.append(add_track(pid, f"{name}_{suffix}", "stem", path)["name"])
-            finally:
-                shutil.rmtree(out, ignore_errors=True)
-            return {"tracks": added}
+            return {"tracks": svc.run_tool(pid, name, req.tool, job.update)}
 
         return asdict(jobs.submit(f"tool:{req.tool}", pid, work))
 
     # ---------- tempo ----------
 
-    def detect_tempo(pid: str, track_name: str | None) -> dict:
-        p = get_project(pid)
-        if track_name:
-            t = track_or_404(p, track_name)
-        else:
-            t = next((x for x in p["tracks"] if analysis.is_drum_track(x["name"])), None) or \
-                next(x for x in p["tracks"] if x["kind"] == "mix")
-        y, sr = audio.read_mono(store.path(pid) / t["file"], sr=None)
-        result = {**tempo.estimate(y, sr), "track": t["name"], "source": "detected"}
-        result["detected_bpm"] = result["bpm"]
-        with store.edit(pid, "Detect tempo") as proj:
-            proj["tempo"] = result
-        return result
-
     @app.post("/api/projects/{pid}/tempo")
     def post_tempo(pid: str, req: TempoDetectReq):
-        return detect_tempo(pid, req.track)
+        try:
+            return detect_tempo(pid, req.track)
+        except KeyError as e:
+            raise HTTPException(404, str(e))
 
     @app.put("/api/projects/{pid}/tempo")
     def put_tempo(pid: str, req: TempoSetReq):
@@ -435,6 +377,86 @@ def create_app(store: Store | None = None) -> FastAPI:
                 raise HTTPException(400, "set a bpm first")
             p["tempo"] = base
             return p["tempo"]
+
+    @app.post("/api/jobs/{jid}/cancel")
+    def cancel_job(jid: str):
+        if not jobs.cancel(jid):
+            raise HTTPException(409, "job is not running")
+        return {"ok": True}
+
+    # ---------- batch workflows ----------
+
+    @app.get("/api/fs")
+    def list_folder(path: str | None = None):
+        """Folders and audio files at a path on this computer (for the folder picker)."""
+        try:
+            return workflows.list_dir(path)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+
+    @app.get("/api/workflows")
+    def list_workflows():
+        return {
+            "presets": [w.model_dump() for w in workflows.PRESETS],
+            "saved": workflows.saved(),
+            "default_output": str(workflows.default_output()),
+        }
+
+    @app.put("/api/workflows")
+    def save_workflow(wf: workflows.Workflow):
+        try:
+            workflows.check(wf)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        return {"saved": workflows.save(wf)}
+
+    @app.delete("/api/workflows/{name}")
+    def delete_workflow(name: str):
+        return {"saved": workflows.delete(name)}
+
+    @app.post("/api/batches")
+    def start_batch(req: BatchReq):
+        try:
+            workflows.check(req.workflow)
+            if req.workflow.separate.enabled or req.workflow.tools:
+                st = separation.status()
+                if not st["available"]:
+                    raise ValueError(st["reason"])
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        folder = Path(req.input_dir).expanduser()
+        if not folder.is_dir():
+            raise HTTPException(400, f"not a folder: {folder}")
+        files = workflows.find_audio(folder, req.recursive)
+        if req.files is not None:
+            wanted = set(req.files)
+            files = [f for f in files if f.name in wanted or str(f.relative_to(folder)) in wanted]
+        if not files:
+            raise HTTPException(400, "no audio files to process")
+        base = Path(req.output_dir).expanduser() if req.output_dir else workflows.default_output()
+        out_root = workflows.unique_dir(base / workflows.batch_name(folder))
+
+        def work(job: Job):
+            return workflows.run_batch(svc, files, req.workflow, out_root, job)
+
+        job = jobs.submit("batch", "batch", work)
+        job.detail = {"output": str(out_root), "workflow": req.workflow.name,
+                      "songs": [{"file": str(f), "song": f.stem, "status": "queued", "message": ""} for f in files]}
+        return asdict(job)
+
+    @app.get("/api/batches")
+    def list_batches():
+        return jobs.of_kind("batch")
+
+    @app.post("/api/reveal")
+    def reveal(req: RevealReq):
+        """Open a folder in Finder / Explorer / the file manager (Chopper runs locally)."""
+        target = Path(req.path).expanduser()
+        if not target.exists():
+            raise HTTPException(404, "folder not found")
+        cmd = {"Darwin": ["open"], "Windows": ["explorer"]}.get(platform.system(), ["xdg-open"])
+        subprocess.Popen([*cmd, str(target)])
+        return {"ok": True}
 
     @app.get("/api/jobs/{jid}")
     def job(jid: str):
@@ -505,39 +527,15 @@ def create_app(store: Store | None = None) -> FastAPI:
     @app.post("/api/projects/{pid}/kits")
     def build_kit(pid: str, req: KitReq):
         p = get_project(pid)
-        sources = [track_or_404(p, n) for n in (req.tracks or [req.track])]
-        by_name = {t["name"]: t for t in sources}
+        names = req.tracks or [req.track]
+        for n in names:
+            track_or_404(p, n)
         if req.mode not in ("drums", "chops", "phrases"):
             raise HTTPException(400, "mode must be drums, chops or phrases")
-        folder = store.path(pid)
 
         def work(job: Job):
-            recs = []
-            # Several tracks (split drum parts): judge every hit against the loudest part.
-            ref = max(float(np.abs(audio.read(folder / t["file"])[0]).max()) for t in sources) \
-                if len(sources) > 1 else None
-            for i, t in enumerate(sources):
-                def progress(f, m, i=i, t=t):
-                    prefix = f"{t['name']} ({i + 1}/{len(sources)}): " if len(sources) > 1 else ""
-                    job.update((i + f) / len(sources) * 0.95, prefix + m)
-                # A multi-track kit is trimmed to size once, across all tracks.
-                size = req.kit_size if len(sources) == 1 else None
-                recs += kits.extract(folder, t, req.mode, req.sensitivity, req.similarity,
-                                     req.max_per_category, kit_size=size, progress=progress, ref_peak=ref)
-            if req.kit_size and len(sources) > 1:
-                recs = kits.select_kit(recs, req.kit_size)
-            job.update(0.96, f"Saving {len(recs)} samples…")
-            step = "Build drum kit" if req.mode == "drums" else "Extract sound bits"
-            where = sources[0]["name"] if len(sources) == 1 else f"{len(sources)} tracks"
-            with store.edit(pid, f"{step} from {where}") as proj:
-                if req.replace:
-                    old = [s for s in proj["samples"] if s.get("track") in by_name and s.get("origin") == req.mode]
-                    gone = {s["id"] for s in old}
-                    proj["samples"] = [s for s in proj["samples"] if s["id"] not in gone]
-                    proj["pads"] = [None if p in gone else p for p in proj["pads"]]
-                saved = [kits.save_sample(folder, proj, by_name[r["track"]], r) for r in recs]
-                if req.load_pads:
-                    proj["pads"] = kits.layout_pads(saved)
+            saved = svc.build_kit(pid, names, req.mode, req.sensitivity, req.similarity, req.max_per_category,
+                                  req.kit_size, req.load_pads, req.replace, job.update)
             return {"samples": [s["id"] for s in saved], "pads_loaded": req.load_pads}
 
         return asdict(jobs.submit(f"kit:{req.mode}", pid, work))

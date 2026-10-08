@@ -99,7 +99,7 @@ export interface Meta {
   separation: { available: boolean; reason: string | null }
   device: { device: 'cuda' | 'mps' | 'directml' | 'cpu'; name: string; hint: string | null } | null
   models: Model[]
-  tools: Record<string, { label: string; description: string; for: string }>
+  tools: Record<string, { label: string; description: string; for: string; outputs: string[] }>
 }
 
 export interface ExportResult {
@@ -107,4 +107,51 @@ export interface ExportResult {
   path: string
   url: string
   count: number
+}
+
+export interface Workflow {
+  name: string
+  description: string
+  separate: { enabled: boolean; model: string; stems: string[] | null; rest: boolean }
+  tools: { tool: string; on: string }[]
+  tempo: boolean
+  key: boolean
+  kit: { enabled: boolean; source: string; size: number; uniqueness: number }
+  bits: { enabled: boolean; stems: string[]; mode: 'chops' | 'phrases'; max: number; uniqueness: number }
+  export: {
+    stems: 'all' | 'kept' | 'none' | string[]
+    mix: boolean
+    kit: boolean
+    samples: boolean
+    bpm_names: boolean
+    key_names: boolean
+    normalize: boolean
+  }
+  keep_projects: boolean
+}
+
+export interface BatchSong {
+  file: string
+  song: string
+  status: 'queued' | 'running' | 'done' | 'error' | 'cancelled'
+  message: string
+  output?: string
+  project?: string
+  bpm?: number
+  key?: string
+  kit?: number
+  samples?: number
+  files?: number
+  warnings?: string[]
+}
+
+export interface BatchJob extends Job {
+  detail: { output: string; workflow: string; songs: BatchSong[] } | null
+}
+
+export interface FolderListing {
+  path: string
+  parent: string | null
+  dirs: string[]
+  files: string[]
 }

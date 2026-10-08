@@ -338,6 +338,27 @@ def pad_label(index: int) -> str:
     return f"{'ABCD'[index // PADS_PER_BANK]}{index % PADS_PER_BANK + 1:02d}"
 
 
+def kit_files(project_dir: Path, samples: list[dict], norm: bool = False,
+              pad_labels: dict[str, str] | None = None, bpm: float | None = None):
+    """Yield (relative path, wav bytes) for a kit: <category>/<name>[_<bpm>bpm][_<key>].wav,
+    or, with pad_labels ({sample id: 'A01'}), a flat A01_<name>….wav pad kit. BPM only on
+    sounds at least ~a beat long (loops, phrases), not one-shots."""
+    used: set[str] = set()
+    for s in samples:
+        y, sr = audio.read(project_dir / s["file"])
+        if norm:
+            y = audio.normalize(y)
+        # Drum hits are one-shots however long their tail rings: never a BPM in the name.
+        tempo = None if s.get("origin") == "drums" else bpm
+        name = export_name(safe_name(s["name"]), tempo, s.get("duration") or y.shape[1] / sr, s.get("key"))
+        base = f"{pad_labels[s['id']]}_{name}" if pad_labels else f"{safe_name(s['category'])}/{name}"
+        path, n = f"{base}.wav", 2
+        while path in used:
+            path, n = f"{base}_{n}.wav", n + 1
+        used.add(path)
+        yield path, audio.wav_bytes24(y, sr)
+
+
 def export_kit(
     project_dir: Path,
     project: dict,
@@ -347,30 +368,24 @@ def export_kit(
     pad_labels: dict[str, str] | None = None,
     bpm: float | None = None,
 ) -> Path:
-    """Zip samples into <kit>/<category>/<name>[_<bpm>bpm][_<key>].wav (BPM only on
-    sounds at least ~a beat long, i.e. loops and phrases, not one-shots).
-
-    pad_labels: {sample id: 'A01'} exports a pad kit instead: a flat folder of
-    <kit>/A01_<name>[_<key>].wav, in pad order.
-    """
+    """Zip a kit (see kit_files) under a <kit>/ folder."""
     if not samples:
         raise ValueError("no samples to export")
     kit = safe_name(kit_name) or "kit"
     zip_path = project_dir / "exports" / f"{kit}-{time.strftime('%Y%m%d-%H%M%S')}.zip"
-    used: set[str] = set()
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
-        for s in samples:
-            y, sr = audio.read(project_dir / s["file"])
-            if norm:
-                y = audio.normalize(y)
-            name = export_name(safe_name(s["name"]), bpm, s.get("duration") or y.shape[1] / sr, s.get("key"))
-            if pad_labels:
-                base = f"{kit}/{pad_labels[s['id']]}_{name}"
-            else:
-                base = f"{kit}/{safe_name(s['category'])}/{name}"
-            path, n = f"{base}.wav", 2
-            while path in used:
-                path, n = f"{base}_{n}.wav", n + 1
-            used.add(path)
-            zf.writestr(path, audio.wav_bytes24(y, sr))
+        for path, data in kit_files(project_dir, samples, norm, pad_labels, bpm):
+            zf.writestr(f"{kit}/{path}", data)
     return zip_path
+
+
+def write_kit(project_dir: Path, samples: list[dict], out_dir: Path, norm: bool = False,
+              pad_labels: dict[str, str] | None = None, bpm: float | None = None) -> list[Path]:
+    """Write a kit (see kit_files) straight into a folder; returns the files written."""
+    written = []
+    for path, data in kit_files(project_dir, samples, norm, pad_labels, bpm):
+        target = out_dir / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(data)
+        written.append(target)
+    return written

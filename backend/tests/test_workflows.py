@@ -1,0 +1,151 @@
+import json
+import time
+from pathlib import Path
+
+import numpy as np
+import pytest
+import soundfile as sf
+from fastapi.testclient import TestClient
+
+from chopper import separation, workflows
+from chopper.app import create_app
+from chopper.store import Store
+
+from . import synth
+from .synth import SR
+
+
+def fake_separate(src, out, model, progress=None):
+    """Every stem the model promises: drums = the song itself, others = quiet tones."""
+    out.mkdir(parents=True, exist_ok=True)
+    y, sr = sf.read(src)
+    stems = next(m for m in separation.MODELS if m["id"] == model)["stems"]
+    paths = {}
+    for i, name in enumerate(stems):
+        sig = y if name == "drums" else 0.05 * np.sin(2 * np.pi * (110 * (i + 1)) * np.arange(len(y)) / sr)
+        paths[name] = out / f"x_({name})_m.wav"
+        sf.write(paths[name], sig, sr)
+    return paths
+
+
+def fake_tool(src, out, tool, progress=None):
+    """DrumSep stand-in: kick / snare / hat parts at 120 BPM."""
+    out.mkdir(parents=True, exist_ok=True)
+    beat, paths = 0.5, {}
+    for name, sig, off in (("kick", synth.kick(), 0), ("snare", synth.snare(), beat), ("hihat", synth.hat(), beat / 2)):
+        y = synth.place([(off + i * 2 * beat, sig) for i in range(8)], 8.5)
+        paths[name] = out / f"{name}.wav"
+        sf.write(paths[name], y, SR)
+    return paths
+
+
+@pytest.fixture
+def env(tmp_path, monkeypatch):
+    monkeypatch.setenv("CHOPPER_DATA", str(tmp_path / "data"))
+    monkeypatch.setattr(separation, "status", lambda: {"available": True, "reason": None})
+    monkeypatch.setattr(separation, "separate", fake_separate)
+    monkeypatch.setattr(separation, "run_tool", fake_tool)
+    album = tmp_path / "My Album"
+    album.mkdir()
+    for i, bpm in enumerate((96, 120)):
+        sf.write(album / f"0{i + 1} Song {i + 1}.wav", synth.groove(bpm=bpm, bars=4)[0], SR)
+    (album / "03 Broken.wav").write_bytes(b"not audio")
+    (album / "notes.txt").write_text("ignored")
+    client = TestClient(create_app(Store(tmp_path / "data")))
+    return client, album, tmp_path
+
+
+def preset(name):
+    return next(w for w in workflows.PRESETS if w.name == name).model_dump()
+
+
+def run(client, **body):
+    r = client.post("/api/batches", json=body)
+    assert r.status_code == 200, r.text
+    for _ in range(600):
+        j = client.get(f"/api/jobs/{r.json()['id']}").json()
+        if j["status"] not in ("pending", "running"):
+            return j
+        time.sleep(0.05)
+    raise TimeoutError
+
+
+def test_folder_listing(env):
+    client, album, _ = env
+    r = client.get("/api/fs", params={"path": str(album)}).json()
+    assert r["files"] == ["01 Song 1.wav", "02 Song 2.wav", "03 Broken.wav"] and r["dirs"] == []
+    assert client.get("/api/fs", params={"path": str(album / "nope")}).status_code == 400
+
+
+def test_drum_kit_per_song(env):
+    client, album, tmp = env
+    out = tmp / "out"
+    j = run(client, input_dir=str(album), output_dir=str(out), workflow=preset("Drum kit per song"))
+    assert j["status"] == "done", j["error"]
+    songs = j["result"]["songs"]
+    assert [s["status"] for s in songs] == ["done", "done", "error"]  # a broken file doesn't stop the batch
+    assert "could not read audio" in songs[2]["message"]
+
+    batch = Path(j["result"]["output"])
+    assert batch.parent == out and batch.name.startswith("My Album – ")
+    kit = sorted(p.name for p in (batch / "01 Song 1" / "kit").iterdir())
+    assert kit[0].startswith("A01_kick") and any(n.startswith("A05_snare") for n in kit) \
+        and any(n.startswith("A09_hihat") for n in kit)
+    assert not any("bpm" in n for n in kit)  # one-shots never carry a BPM
+    assert not (batch / "01 Song 1" / "stems").exists()  # this preset exports only the kit
+    summary = json.loads((batch / "chopper-batch.json").read_text())
+    assert summary["workflow"]["name"] == "Drum kit per song" and len(summary["songs"]) == 3
+    # Songs stay as projects to tweak later.
+    assert {p["name"] for p in client.get("/api/projects").json()} == {"01 Song 1", "02 Song 2"}
+
+
+def test_stems_with_names_and_no_projects(env):
+    client, album, _ = env
+    wf = preset("Vocals + bass stems") | {"keep_projects": False}
+    j = run(client, input_dir=str(album), files=["02 Song 2.wav"], workflow=wf)
+    assert j["status"] == "done", j["error"]
+    song = j["result"]["songs"][0]
+    stems = sorted(p.name for p in (Path(song["output"]) / "stems").iterdir())
+    assert [n.split("_")[0] for n in stems] == ["bass", "vocals"]
+    assert all(f"_{round(song['bpm'])}bpm" in n for n in stems)  # BPM in the names
+    assert Path(j["result"]["output"]).parent == Path(client.get("/api/workflows").json()["default_output"])
+    assert client.get("/api/projects").json() == []  # keep_projects off
+
+
+def test_cancel(env, monkeypatch):
+    client, album, _ = env
+    slow = fake_separate
+
+    def slow_separate(*a, **k):
+        time.sleep(0.5)
+        return slow(*a, **k)
+
+    monkeypatch.setattr(separation, "separate", slow_separate)
+    r = client.post("/api/batches", json={"input_dir": str(album), "workflow": preset("All stems")}).json()
+    time.sleep(0.2)
+    assert client.post(f"/api/jobs/{r['id']}/cancel").status_code == 200
+    for _ in range(200):
+        j = client.get(f"/api/jobs/{r['id']}").json()
+        if j["status"] not in ("pending", "running"):
+            break
+        time.sleep(0.05)
+    assert j["status"] == "cancelled"
+    assert j["detail"]["songs"][-1]["status"] == "cancelled"
+
+
+def test_bad_requests(env):
+    client, album, _ = env
+    bad = preset("All stems")
+    bad["separate"]["stems"] = ["kazoo"]
+    assert client.post("/api/batches", json={"input_dir": str(album), "workflow": bad}).status_code == 400
+    assert client.post("/api/batches", json={"input_dir": "/nope", "workflow": preset("All stems")}).status_code == 400
+    assert client.post("/api/batches", json={"input_dir": str(album), "files": ["x.wav"],
+                                             "workflow": preset("All stems")}).status_code == 400
+
+
+def test_save_and_delete_workflow(env):
+    client, _, _ = env
+    wf = preset("Acapellas") | {"name": "My acapellas"}
+    assert [w["name"] for w in client.put("/api/workflows", json=wf).json()["saved"]] == ["My acapellas"]
+    assert client.get("/api/workflows").json()["saved"][0]["tools"][0]["tool"] == "dereverb"
+    assert client.delete("/api/workflows/My acapellas").json()["saved"] == []
