@@ -126,7 +126,7 @@ def _bench(tmp_path, capsys, monkeypatch, cost):
     monkeypatch.setattr(separation, "device_info", lambda: {"name": "Test RTX · 6 GB"})
 
     def slow_separate(self, src):
-        _time.sleep(cost(self.batch, self.kw.get("use_autocast", False)))
+        _time.sleep(cost(self.batch, self.kw.get("use_autocast", False)))  # may raise, like a real model
         return FakeSeparator.separate(self, src)
 
     import audio_separator.separator as pkg
@@ -155,3 +155,38 @@ def test_benchmark_keeps_default_when_bigger_batches_spill(cuda, capsys, monkeyp
     code, out = _bench(tmp_path, capsys, monkeypatch, lambda batch, fp16: 0.15 if batch == 1 else 0.5)
     assert code == 0 and "keeping it" in out
     assert separation.gpu_settings() == {}
+
+
+def test_fp16_overflow_retries_in_fp32_on_the_gpu(cuda, fake, tmp_path, monkeypatch):
+    from audio_separator.separator.exceptions import InvalidAudioDataError
+
+    separation.save_gpu_settings({"mdxc": {"batch": 1, "fp16": True}})
+    real = FakeSeparator.separate
+
+    def overflow(self, src):
+        if self.kw.get("use_autocast"):
+            raise InvalidAudioDataError("Audio data must contain only finite values")
+        return real(self, src)
+
+    monkeypatch.setattr(FakeSeparator, "separate", overflow)
+    msgs = []
+    separation._run_model(tmp_path / "in.wav", tmp_path / "o", "MDX23C-DrumSep-aufr33-jarredou.ckpt",
+                          lambda p, m: msgs.append(m))
+    used = [(s.kw["use_autocast"], s.torch_device.type) for s in fake.created]
+    assert used == [(True, "cuda"), (False, "cuda")]  # same GPU, full precision; no CPU fallback
+    assert "Half precision gave invalid audio, retrying in full precision…" in msgs
+    assert separation.LAST_RUN["fp16_failed"] and separation.LAST_RUN["fallback"] is None
+
+
+def test_benchmark_survives_a_setting_that_breaks_the_model(cuda, capsys, monkeypatch, tmp_path):
+    from audio_separator.separator.exceptions import InvalidAudioDataError
+
+    def cost(batch, fp16):
+        if fp16:
+            raise InvalidAudioDataError("Audio data must contain only finite values")
+        return 0.3 / batch
+
+    code, out = _bench(tmp_path, capsys, monkeypatch, cost)
+    assert code == 0
+    assert "fp16 gave invalid audio; ran in fp32" in out  # reported, not a crash
+    assert separation.gpu_settings() == {"mdxc": {"batch": 3, "fp16": False}}  # never picks fp16

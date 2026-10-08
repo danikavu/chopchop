@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import functools
 import importlib.util
+import io
 import json
 import logging
 import os
@@ -346,14 +347,15 @@ def auto_batch(arch: str) -> int:
     return max(1, min(8, int((free_gb - 2.0) / 1.0)))
 
 
-def gpu_tuning(model: str = "", force_cpu: bool = False, batch: int | None = None) -> dict:
+def gpu_tuning(model: str = "", force_cpu: bool = False, batch: int | None = None,
+               fp16: bool | None = None) -> dict:
     """Batch size and fp16 for one run.
 
     Defaults are audio-separator's own (batch 1, fp32): measured faster than bigger
     guesses on at least one 6 GB Windows card. They only change through `chopper
     benchmark` (measured on this machine, saved in settings.json) or the overrides
     CHOPPER_GPU_BATCH=N / CHOPPER_FP16=0|1. Demucs gets nothing: it has no batch
-    setting and doesn't use autocast. batch: forced (out-of-memory retries).
+    setting and doesn't use autocast. batch / fp16: forced (retries after a failure).
     """
     arch = arch_of(model) if model else "mdxc"
     plain = {"arch": arch, "batch": 1, "fp16": False, "label": ""}
@@ -369,7 +371,8 @@ def gpu_tuning(model: str = "", force_cpu: bool = False, batch: int | None = Non
     env_batch, env_fp16 = os.environ.get("CHOPPER_GPU_BATCH"), os.environ.get("CHOPPER_FP16")
     if batch is None:
         batch = int(env_batch) if env_batch and env_batch.isdigit() else int(saved.get("batch", 1))
-    fp16 = env_fp16 == "1" if env_fp16 in ("0", "1") else bool(saved.get("fp16", False))
+    if fp16 is None:
+        fp16 = env_fp16 == "1" if env_fp16 in ("0", "1") else bool(saved.get("fp16", False))
     batch = max(1, batch)
     label = " · ".join(x for x in (f"batch {batch}" if batch > 1 else "", "fp16" if fp16 else "") if x)
     return {"arch": arch, "batch": batch, "fp16": fp16, "label": label}
@@ -447,9 +450,9 @@ def _run_model(src: Path, out_dir: Path, model: str, emit: Progress) -> dict[str
     is_demucs = model.endswith(".yaml")
     info = _info(model)
 
-    def run(force_cpu: bool, batch: int | None) -> list[str]:
+    def run(force_cpu: bool, batch: int | None, fp16: bool | None = None) -> list[str]:
         emit(0.02, "Preparing model (downloads on first use)…")
-        tuning = gpu_tuning(model, force_cpu, batch)
+        tuning = gpu_tuning(model, force_cpu, batch, fp16)
         extra = {}
         if tuning["arch"] != "demucs":  # Demucs: exactly audio-separator's defaults
             extra["use_autocast"] = tuning["fp16"]
@@ -457,15 +460,22 @@ def _run_model(src: Path, out_dir: Path, model: str, emit: Progress) -> dict[str
                 extra["mdx_params"] = {**MDX_DEFAULTS, "batch_size": tuning["batch"]}
             else:
                 extra["mdxc_params"] = {**MDXC_DEFAULTS, "batch_size": tuning["batch"]}
-        sep = Separator(
-            output_dir=str(out_dir),
-            model_file_dir=str(model_dir()),
-            output_format="WAV",
-            use_soundfile=True,  # write WAVs directly instead of through pydub/ffmpeg
-            use_directml=_has("torch_directml"),  # AMD/Intel GPUs on Windows, if installed
-            log_level=logging.ERROR if QUIET else logging.INFO,
-            **extra,
-        )
+        # onnxruntime prints "Skip loading CUDA and cuDNN DLLs since torch is imported."
+        # on every start on Windows (harmless); pass through anything else it prints.
+        printed = io.StringIO()
+        with contextlib.redirect_stdout(printed):
+            sep = Separator(
+                output_dir=str(out_dir),
+                model_file_dir=str(model_dir()),
+                output_format="WAV",
+                use_soundfile=True,  # write WAVs directly instead of through pydub/ffmpeg
+                use_directml=_has("torch_directml"),  # AMD/Intel GPUs on Windows, if installed
+                log_level=logging.ERROR if QUIET else logging.INFO,
+                **extra,
+            )
+        for line in printed.getvalue().splitlines():
+            if line.strip() and not line.startswith("Skip loading CUDA and cuDNN DLLs"):
+                print(line)
         run_info.update(device=_device_label(sep) if not force_cpu else "CPU", batch=tuning["batch"],
                         fp16=tuning["fp16"])
         if force_cpu:
@@ -486,14 +496,23 @@ def _run_model(src: Path, out_dir: Path, model: str, emit: Progress) -> dict[str
         return files
 
     batch = None  # None = saved / default setting
+    fp16: bool | None = None
     run_info: dict = {"model": model, "arch": arch_of(model), "fallback": None}
     started = time.time()
     while True:
         try:
-            files = run(force_cpu=False, batch=batch)
+            files = run(force_cpu=False, batch=batch, fp16=fp16)
             break
         except Exception as e:  # noqa: BLE001 - classified below
             msg = str(e).lower()
+            if "finite" in msg and fp16 is not False and gpu_tuning(model, batch=batch, fp16=fp16)["fp16"]:
+                # Half precision overflowed (seen with MDX23C DrumSep on a 6 GB RTX card):
+                # the model output inf/NaN. Same GPU, same batch, full precision.
+                log.warning("fp16 gave invalid audio with %s; retrying in fp32", model)
+                fp16 = False
+                run_info["fp16_failed"] = True
+                emit(0.02, "Half precision gave invalid audio, retrying in full precision…")
+                continue
             oom = _is_oom(msg)
             if oom:
                 _free_gpu_memory()

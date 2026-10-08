@@ -388,12 +388,20 @@ def cmd_benchmark(args) -> int:
                 candidates += [(big, False)] + ([(big, True)] if fp16_ok else []) if big > 1 else []
             rows = []
             for batch, fp16 in candidates:
-                secs, run = timed(model, batch, fp16)
-                rows.append({"batch": batch, "fp16": fp16, "seconds": secs, "fallback": run.get("fallback")})
-                note = " (fell back to CPU!)" if run.get("fallback") else ""
+                setting = f"  batch {batch:<2} {'fp16' if fp16 else 'fp32'}"
+                try:
+                    secs, run = timed(model, batch, fp16)
+                except Exception as e:  # noqa: BLE001 - a setting that breaks the model is a result too
+                    rows.append({"batch": batch, "fp16": fp16, "seconds": float("inf"), "fallback": str(e)})
+                    print(f"{setting}  failed: {str(e)[:90]}")
+                    continue
+                # A run that only worked after falling back (to CPU, or fp16 → fp32) doesn't count.
+                failed = run.get("fallback") or (fp16 and run.get("fp16_failed") and "fp16 gave invalid audio")
+                rows.append({"batch": batch, "fp16": fp16, "seconds": secs, "fallback": failed})
+                note = " (fell back to CPU!)" if run.get("fallback") else \
+                    " (fp16 gave invalid audio; ran in fp32)" if failed else ""
                 speed = rows[0]["seconds"] / secs
-                print(f"  batch {batch:<2} {'fp16' if fp16 else 'fp32'}  {secs:6.1f}s  "
-                      f"{clip_s / secs:5.1f}× realtime  {speed:4.2f}× vs default{note}")
+                print(f"{setting}  {secs:6.1f}s  {clip_s / secs:5.1f}× realtime  {speed:4.2f}× vs default{note}")
             results[name] = rows
     finally:
         for k, v in saved_env.items():
