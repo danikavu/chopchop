@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import functools
 import importlib.util
+import logging
 import platform
 import re
 import shutil
@@ -128,6 +129,19 @@ TOOLS = {
 
 Progress = Callable[[float, str], None]
 
+# Terminal use (the CLI): keep audio-separator's INFO logs and its console progress bars
+# out of the output; Chopper reports progress itself.
+QUIET = False
+
+
+class _NullWriter:
+    def write(self, _s: str) -> int:
+        return 0
+
+    def flush(self) -> None:
+        pass
+
+
 # One separation at a time: they saturate the GPU/CPU anyway, and progress capture
 # temporarily swaps audio-separator's tqdm bars (process-wide).
 _lock = threading.Lock()
@@ -246,6 +260,8 @@ class _ProgressCapture:
 
         class Bar(base):  # type: ignore[misc, valid-type]
             def __init__(self, *args, **kwargs):
+                if QUIET:
+                    kwargs["file"] = _NullWriter()
                 super().__init__(*args, **kwargs)
                 if getattr(self, "unit", "") != "iB":
                     cap.pass_no += 1
@@ -332,6 +348,7 @@ def _run_model(src: Path, out_dir: Path, model: str, emit: Progress) -> dict[str
             output_format="WAV",
             use_soundfile=True,  # write WAVs directly instead of through pydub/ffmpeg
             use_directml=_has("torch_directml"),  # AMD/Intel GPUs on Windows, if installed
+            log_level=logging.ERROR if QUIET else logging.INFO,
         )
         if force_cpu:
             sep.torch_device = sep.torch_device_cpu

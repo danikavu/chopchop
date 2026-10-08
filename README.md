@@ -207,6 +207,40 @@ Songs run one after another, with per-song progress. A file that fails is report
 the batch moves on to the next one. **Cancel** stops between steps, and **open** /
 **folder** jump to a song's project or its files.
 
+### Command line
+
+Batches also run from a terminal, with no browser or server needed. Inside the venv the
+command is `chopper`; anywhere, `python scripts/run.py batch …` does the same.
+
+```sh
+chopper workflows                                        # list presets + saved workflows
+chopper batch ~/Music/Album -w "Drum kit per song"       # a drum kit per song
+chopper batch ~/Music/Album -w "All stems" --stems vocals,bass -o ~/Stems
+chopper batch ~/Music/Album -w "Drum kit per song" --kit-size 32 --only "0[1-3]*" --dry-run
+chopper workflow "Acapellas" > mine.json                 # export a workflow, edit it…
+chopper batch ~/Music/Album --workflow-file mine.json    # …and run it
+```
+
+- **Overrides:** flags tweak the chosen workflow for that run only:
+  - separation: `--model`, `--stems`, `--rest` / `--no-rest`, `--no-separate`;
+  - tools: `--tool drumsep:drums` (repeatable), `--no-tools`;
+  - kit and sound bits: `--kit-size`, `--kit-source`, `--no-kit`, `--uniqueness`,
+    `--bits vocals,bass`, `--bits-mode`;
+  - export: `--export-stems all|kept|none|LIST`, `--export-mix`, `--no-bpm-names`,
+    `--no-key-names`, `--normalize`, `--keep-projects` / `--no-keep-projects`;
+  - input/output: `-o DIR`, `-r` (subfolders), `--only PATTERN`.
+
+  `chopper batch --help` lists them all.
+- **`--dry-run`** prints the plan and the track list without processing anything.
+- **Progress:** a live status line (song, step, model download, GPU progress), then one
+  ✓/✗ line per song. `-q` keeps only the per-song lines.
+- **Ctrl+C** stops after the current step, and the results so far stay in the output
+  folder. Press it twice to quit immediately.
+- **Scripting:** `--json` prints the result as JSON on stdout, with progress on stderr.
+  Exit codes: `0` all songs done · `1` some failed · `2` bad usage · `130` cancelled.
+- **Data folder:** the command line and the app share the same data folder, so kept
+  projects show up in the app (`--data DIR` uses another one).
+
 ### Export file names
 
 Every export uses `<name>[_<bpm>bpm][_<key>].wav`:

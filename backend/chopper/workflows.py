@@ -372,9 +372,31 @@ def _export(svc: Chopper, pid: str, wf: Workflow, kept: list[str], out_dir: Path
     return written
 
 
-def run_batch(svc: Chopper, files: list[Path], wf: Workflow, out_root: Path, job) -> dict:
+def prepare(input_dir: str | Path, files: list[str] | None = None, recursive: bool = False,
+            output_dir: str | Path | None = None) -> tuple[list[Path], Path]:
+    """Resolve a batch request into (audio files, output folder for this run).
+
+    files: subset to process, by file name or path relative to input_dir (None = all).
+    The run folder is <output>/<input folder name> – <date>, numbered if it exists.
+    """
+    folder = Path(input_dir).expanduser()
+    if not folder.is_dir():
+        raise ValueError(f"not a folder: {folder}")
+    found = find_audio(folder, recursive)
+    if files is not None:
+        wanted = set(files)
+        found = [f for f in found if f.name in wanted or str(f.relative_to(folder)) in wanted]
+    if not found:
+        raise ValueError(f"no audio files to process in {folder}")
+    base = Path(output_dir).expanduser() if output_dir else default_output()
+    return found, unique_dir(base / batch_name(folder))
+
+
+def run_batch(svc: Chopper, files: list[Path], wf: Workflow, out_root: Path, job,
+              on_song: Callable[[dict], None] | None = None) -> dict:
     """Run the workflow over files, one song after another. A failing song is recorded
-    and the batch carries on; Cancel stops between steps."""
+    and the batch carries on; Cancel stops between steps. on_song(entry) is called as
+    each song finishes (done or error)."""
     out_root.mkdir(parents=True, exist_ok=True)
     started = time.time()
     songs = [{"file": str(f), "song": f.stem, "status": "queued", "message": ""} for f in files]
@@ -401,6 +423,8 @@ def run_batch(svc: Chopper, files: list[Path], wf: Workflow, out_root: Path, job
                 _write_summary(out_root, wf, songs, started)
                 raise
             entry.update(status="error", message=str(exc) or exc.__class__.__name__)
+        if on_song:
+            on_song(entry)
 
     _write_summary(out_root, wf, songs, started)
     ok = sum(s["status"] == "done" for s in songs)

@@ -424,17 +424,10 @@ def create_app(store: Store | None = None) -> FastAPI:
                     raise ValueError(st["reason"])
         except ValueError as e:
             raise HTTPException(400, str(e))
-        folder = Path(req.input_dir).expanduser()
-        if not folder.is_dir():
-            raise HTTPException(400, f"not a folder: {folder}")
-        files = workflows.find_audio(folder, req.recursive)
-        if req.files is not None:
-            wanted = set(req.files)
-            files = [f for f in files if f.name in wanted or str(f.relative_to(folder)) in wanted]
-        if not files:
-            raise HTTPException(400, "no audio files to process")
-        base = Path(req.output_dir).expanduser() if req.output_dir else workflows.default_output()
-        out_root = workflows.unique_dir(base / workflows.batch_name(folder))
+        try:
+            files, out_root = workflows.prepare(req.input_dir, req.files, req.recursive, req.output_dir)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
 
         def work(job: Job):
             return workflows.run_batch(svc, files, req.workflow, out_root, job)
