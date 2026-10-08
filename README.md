@@ -39,26 +39,32 @@ Chopper uses.
   PyTorch 2.3+ and PyTorch no longer publishes Intel-Mac builds. Import stems made
   elsewhere with **Import stems…**; the rest of Chopper works.
 - **Python 3.14.1** isn't supported by audio-separator.
-- **Getting the most out of an NVIDIA GPU:**
-  - Chopper sizes each separation to the card's *free* VRAM when it starts:
-    - Roformer / MDX23C models (vocals, DrumSep, de-reverb, karaoke): about 1 GB per
-      chunk after a 2 GB reserve, up to 8 chunks at once;
-    - MDX-Net: about 0.5 GB per chunk, up to 16.
-  - It uses half precision (fp16) on RTX-class cards, which is much faster on their tensor
-    cores, but not on GTX 10xx cards, where fp16 is slower.
-  - If the card runs out of memory, the batch is halved and retried. It only falls back
-    to CPU if a single chunk doesn't fit.
-  - Progress shows what was picked, e.g. "Separating on NVIDIA GeForce RTX 2060 · 6 GB ·
-    batch 3/8 · fp16 · 5.3 GB free".
-  - **Demucs always uses about 2 GB, whatever the card.** It processes one ~7.8 s segment
-    at a time and has no batch setting. That's expected and doesn't mean the GPU is idle.
-  - To see real GPU load on Windows, use Task Manager → Performance → GPU, and switch one
-    of the small graphs from "3D" to **"Cuda"** (or "Compute_0"). The default graphs show
-    almost nothing for compute work.
-  - Overrides: `CHOPPER_GPU_BATCH=4` forces a batch size, and `CHOPPER_FP16=0` / `1`
-    forces fp16 off or on. Set them before starting Chopper.
-  - Apple GPUs share memory with the CPU and gain nothing from batching (same output, no
-    speed-up when measured), so they always use batch 1.
+- **Getting the most out of an NVIDIA GPU:** Chopper uses the separation library's defaults
+  (one chunk at a time, full precision), which are safe on every card. Larger batches
+  and half precision (fp16) can speed up the Roformer, MDX23C and MDX-Net models on some
+  cards and slow them down on others. On Windows, a batch too big for the card doesn't
+  even fail: the driver quietly spills into system RAM and everything crawls. So measure
+  instead of guessing:
+
+  ```sh
+  chopper benchmark "path/to/a typical song.wav"     # or: python scripts/run.py benchmark …
+  ```
+
+  - It times each model on a 30-second clip with each setting: batch 1 or a size based
+    on free VRAM, fp16 on or off.
+  - It prints the times, and saves a setting only if it was clearly faster (≥ 7%)
+    without falling back to CPU. Chopper then uses it for those models.
+  - `--no-save` only reports.
+  - Overrides, set before starting Chopper: `CHOPPER_GPU_BATCH=N` and `CHOPPER_FP16=0|1`.
+  - **Demucs isn't tunable.** It processes one ~7.8 s segment at a time, has no batch
+    setting, and doesn't use fp16, so it uses about 2 GB of VRAM whatever the card. That's
+    expected, not a sign the GPU is idle.
+  - **Every separation is logged** to `perf.log` in the data folder: model, device,
+    settings, seconds, and whether it fell back to CPU. If a GPU run fails, Chopper finishes
+    on the CPU and says so in the progress ("GPU failed (…), finishing on CPU"), so a
+    silent CPU run can't pass for "the GPU got slow".
+  - To see real GPU load on Windows, use Task Manager → Performance → GPU, and switch one of
+    the small graphs from "3D" to **"Cuda"** (or "Compute_0").
 - **Disk:** PyTorch takes a few GB. Each separation model downloads once, on first use,
   and ranges from about 50 MB (Demucs) to several hundred MB (Roformer, MDX23C).
   Projects keep their stems and samples as WAV, so allow a few hundred MB per song.

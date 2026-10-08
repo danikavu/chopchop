@@ -233,7 +233,14 @@ def run_song(svc: Chopper, src: Path, wf: Workflow, out_dir: Path, progress: Pro
     warnings: list[str] = []
     result: dict = {"song": src.stem, "warnings": warnings}
 
+    timings: dict[str, float] = {}
+    result["timings"] = timings
+    clock = {"step": None, "t": time.time()}
+
     def step(i: int, label: str) -> Progress:
+        if clock["step"]:
+            timings[clock["step"]] = round(time.time() - clock["t"], 1)
+        clock.update(step=label, t=time.time())
         done = sum(w[:i])
 
         def sub(f: float, m: str) -> None:
@@ -282,6 +289,8 @@ def run_song(svc: Chopper, src: Path, wf: Workflow, out_dir: Path, progress: Pro
                 result["samples"] = _bits(svc, pid, wf.bits, step(i, "sound bits"), warnings)
             elif s == "export":
                 result["files"] = _export(svc, pid, wf, kept, out_dir, step(i, "export"))
+        timings[clock["step"]] = round(time.time() - clock["t"], 1)
+        result["seconds"] = round(sum(timings.values()), 1)
         return result
     finally:
         if not wf.keep_projects:

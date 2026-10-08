@@ -210,8 +210,10 @@ def _song_line(s: dict) -> str:
         bits = [f"{s['bpm']} BPM" if s.get("bpm") else None, s.get("key"),
                 f"{s['kit']} pads" if s.get("kit") else None,
                 f"{s['samples']} sound bits" if s.get("samples") else None,
-                f"{s.get('files', 0)} files"]
+                f"{s.get('files', 0)} files", f"{s['seconds']:.0f}s" if s.get("seconds") else None]
         text = f"  ✓ {s['song']} — " + " · ".join(b for b in bits if b)
+        if s.get("timings") and len(s["timings"]) > 1:
+            text += "\n      " + " · ".join(f"{k} {v:.0f}s" for k, v in s["timings"].items())
         for w in s.get("warnings") or []:
             text += f"\n      ! {w}"
         return text
@@ -308,6 +310,131 @@ def cmd_batch(args) -> int:
     return EXIT_OK if result["failed"] == 0 else EXIT_FAILED
 
 
+# ---------- benchmark ----------
+
+BENCH_MODELS = {
+    "demucs": "htdemucs_ft.yaml",
+    "drumsep": "MDX23C-DrumSep-aufr33-jarredou.ckpt",
+    "vocals": "vocals_mel_band_roformer.ckpt",
+    "mdx": "Kim_Vocal_2.onnx",
+}
+
+
+def cmd_benchmark(args) -> int:
+    """Time each model with each GPU setting on this machine; save what's measurably faster."""
+    import soundfile as sf
+
+    from . import audio, separation
+    from .store import data_dir
+
+    if args.data:
+        os.environ["CHOPPER_DATA"] = str(Path(args.data).expanduser())
+    st = separation.status()
+    if not st["available"]:
+        return _usage(f"stem separation unavailable: {st['reason']}")
+    names = [m.strip() for m in args.models.split(",") if m.strip()]
+    unknown = [m for m in names if m not in BENCH_MODELS]
+    if unknown:
+        return _usage(f"unknown model {unknown[0]!r}; choose from {', '.join(BENCH_MODELS)}")
+
+    src = Path(args.file).expanduser()
+    try:
+        y, sr = audio.read(src)
+    except Exception as e:  # noqa: BLE001
+        return _usage(f"can't read {src}: {e}")
+    n = min(y.shape[1], int(args.seconds * sr))
+    start = max(0, (y.shape[1] - n) // 2)  # the middle: intros are often quiet
+    work = data_dir() / "benchmark"
+    work.mkdir(parents=True, exist_ok=True)
+    clip = work / "clip.wav"
+    sf.write(clip, y[:, start:start + n].T, sr)
+    clip_s = n / sr
+
+    separation.QUIET = not args.verbose
+    warnings.filterwarnings("ignore")
+    logging.basicConfig(level=logging.INFO if args.verbose else logging.WARNING)
+    import torch
+
+    cuda = torch.cuda.is_available()
+    info = separation.device_info()
+    print(f"Device: {info['name']} · clip: {clip_s:.0f} s from {src.name}")
+    if not cuda:
+        print("No NVIDIA GPU: batch size and fp16 only apply to CUDA, so this just times each model.")
+    fp16_ok = cuda and torch.cuda.get_device_capability(0)[0] >= 7
+
+    def timed(model: str, batch: int, fp16: bool) -> tuple[float, dict]:
+        os.environ["CHOPPER_GPU_BATCH"], os.environ["CHOPPER_FP16"] = str(batch), "1" if fp16 else "0"
+        out = work / "out"
+        shutil.rmtree(out, ignore_errors=True)
+        t = time.time()
+        with separation._lock:
+            separation._run_model(clip, out, model, lambda p, m: None)
+        return time.time() - t, dict(separation.LAST_RUN)
+
+    results: dict[str, list] = {}
+    saved_env = {k: os.environ.get(k) for k in ("CHOPPER_GPU_BATCH", "CHOPPER_FP16")}
+    try:
+        for name in names:
+            model = BENCH_MODELS[name]
+            arch = separation.arch_of(model)
+            print(f"\n{name} ({model})")
+            print("  warm-up (download / load, not timed)…", end="", flush=True)
+            timed(model, 1, False)
+            print(" done")
+            candidates = [(1, False)]
+            if cuda and arch != "demucs":
+                big = separation.auto_batch(arch)
+                candidates += [(1, True)] if fp16_ok else []
+                candidates += [(big, False)] + ([(big, True)] if fp16_ok else []) if big > 1 else []
+            rows = []
+            for batch, fp16 in candidates:
+                secs, run = timed(model, batch, fp16)
+                rows.append({"batch": batch, "fp16": fp16, "seconds": secs, "fallback": run.get("fallback")})
+                note = " (fell back to CPU!)" if run.get("fallback") else ""
+                speed = rows[0]["seconds"] / secs
+                print(f"  batch {batch:<2} {'fp16' if fp16 else 'fp32'}  {secs:6.1f}s  "
+                      f"{clip_s / secs:5.1f}× realtime  {speed:4.2f}× vs default{note}")
+            results[name] = rows
+    finally:
+        for k, v in saved_env.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+    # Best setting per architecture: total time over that architecture's models; settings
+    # that fell back to CPU on any model are out.
+    best: dict[str, dict] = {}
+    for arch in ("mdx", "mdxc"):
+        tested = [rows for n, rows in results.items() if separation.arch_of(BENCH_MODELS[n]) == arch]
+        if not tested or len(tested[0]) < 2:
+            continue
+        totals: dict[tuple, float] = {}
+        for rows in tested:
+            for r in rows:
+                key = (r["batch"], r["fp16"])
+                totals[key] = totals.get(key, 0.0) + (float("inf") if r["fallback"] else r["seconds"])
+        choice = min(totals, key=totals.get)
+        if choice != (1, False) and totals[choice] < totals[(1, False)] * 0.93:  # clearly faster only
+            best[arch] = {"batch": choice[0], "fp16": choice[1]}
+    print()
+    if not best:
+        print("Result: the default (batch 1, fp32) is as fast as anything else here; keeping it.")
+        if not args.no_save and separation.gpu_settings():
+            separation.save_gpu_settings({})
+            print("Cleared previously saved GPU settings.")
+        return EXIT_OK
+    for arch, b in best.items():
+        label = {"mdx": "MDX-Net", "mdxc": "Roformer / MDX23C"}[arch]
+        print(f"Result: {label} is fastest with batch {b['batch']}{' + fp16' if b['fp16'] else ''}.")
+    if args.no_save:
+        print("(not saved: --no-save)")
+    else:
+        separation.save_gpu_settings(best)
+        print(f"Saved to {data_dir() / 'settings.json'}; Chopper uses these from now on (restart the app).")
+    return EXIT_OK
+
+
 # ---------- parser ----------
 
 def _usage(msg: str) -> int:
@@ -379,6 +506,18 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("-q", "--quiet", action="store_true", help="no live status line, just one line per song")
     r.add_argument("-v", "--verbose", action="store_true", help="show the separation libraries' own logs")
 
+    bm = sub.add_parser("benchmark", help="time each separation model / GPU setting here, keep the fastest",
+                        description="Times the separation models on a clip of FILE with each GPU setting "
+                                    "(batch size, fp16), prints the results, and saves a setting only if it "
+                                    "was clearly faster than the default.")
+    bm.add_argument("file", help="an audio file to test with (a typical song)")
+    bm.add_argument("--seconds", type=float, default=30, help="clip length (default 30)")
+    bm.add_argument("--models", default="demucs,drumsep,vocals,mdx",
+                    help="which to test: demucs, drumsep, vocals, mdx (default: all)")
+    bm.add_argument("--no-save", action="store_true", help="just print, don't save settings")
+    bm.add_argument("--data", metavar="DIR", help="Chopper data folder")
+    bm.add_argument("-v", "--verbose", action="store_true")
+
     ws = sub.add_parser("workflows", help="list presets and saved workflows")
     ws.add_argument("--json", action="store_true")
     wo = sub.add_parser("workflow", help="print a workflow as JSON")
@@ -388,6 +527,6 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    handlers = {None: cmd_serve, "serve": cmd_serve, "batch": cmd_batch,
+    handlers = {None: cmd_serve, "serve": cmd_serve, "batch": cmd_batch, "benchmark": cmd_benchmark,
                 "workflows": cmd_workflows, "workflow": cmd_workflow}
     return handlers[args.cmd](args)

@@ -221,7 +221,8 @@ def main() -> None:
     sub.add_parser("dev", help="API with auto-reload + Vite hot reload").set_defaults(fn=dev)
     sub.add_parser("test", help="pytest + typecheck").set_defaults(fn=test)
     for name, text in (("batch", "run a workflow over a folder, e.g. batch ~/Music/Album -w \"Drum kit per song\""),
-                       ("workflows", "list batch workflows"), ("workflow", "print a workflow as JSON")):
+                       ("workflows", "list batch workflows"), ("workflow", "print a workflow as JSON"),
+                       ("benchmark", "time separation models / GPU settings on this machine")):
         sub.add_parser(name, help=text, add_help=False).set_defaults(fn=chopper_cli)
     # Unknown flags are forwarded to chopper by `run`; other commands reject them.
     args, extra = parser.parse_known_args()
