@@ -140,7 +140,7 @@ def create_app(store: Store | None = None) -> FastAPI:
     store = store or Store()
     svc = Chopper(store)
     jobs = JobRunner()
-    app = FastAPI(title="Chopper")
+    app = FastAPI(title="ChopChop")
 
     @app.middleware("http")
     async def undo_headers(request, call_next):
@@ -445,7 +445,7 @@ def create_app(store: Store | None = None) -> FastAPI:
 
     @app.post("/api/reveal")
     def reveal(req: RevealReq):
-        """Open a folder in Finder / Explorer / the file manager (Chopper runs locally)."""
+        """Open a folder in Finder / Explorer / the file manager (ChopChop runs locally)."""
         target = Path(req.path).expanduser()
         if not target.exists():
             raise HTTPException(404, "folder not found")

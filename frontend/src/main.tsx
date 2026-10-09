@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { api } from './api'
 import { BatchView } from './components/BatchView'
+import { StickerBackground } from './components/Brand'
 import { ProjectList } from './components/ProjectList'
 import { ProjectView } from './components/ProjectView'
 import type { Meta } from './types'
@@ -23,7 +24,7 @@ function App() {
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    api.meta().then(setMeta).catch((e) => setError(`Can't reach the Chopper server: ${e.message}`))
+    api.meta().then(setMeta).catch((e) => setError(`Can't reach the ChopChop server: ${e.message}`))
     const onHash = () => {
       setPid(currentProject())
       setBatch(onBatchPage())
@@ -32,13 +33,17 @@ function App() {
     return () => window.removeEventListener('hashchange', onHash)
   }, [])
 
-  if (error) return <div className="center error">{error}</div>
-  if (!meta) return <div className="center muted">Loading…</div>
-  if (batch) return <BatchView meta={meta} onOpenProject={(id) => (location.hash = `#/p/${id}`)} />
-  return pid ? (
-    <ProjectView key={pid} pid={pid} meta={meta} onBack={() => (location.hash = '')} />
-  ) : (
-    <ProjectList onOpen={(id) => (location.hash = `#/p/${id}`)} />
+  let page
+  if (error) page = <div className="center error">{error}</div>
+  else if (!meta) page = <div className="center muted">Loading…</div>
+  else if (batch) page = <BatchView meta={meta} onOpenProject={(id) => (location.hash = `#/p/${id}`)} />
+  else if (pid) page = <ProjectView key={pid} pid={pid} meta={meta} onBack={() => (location.hash = '')} />
+  else page = <ProjectList onOpen={(id) => (location.hash = `#/p/${id}`)} />
+  return (
+    <>
+      <StickerBackground />
+      <div className="app">{page}</div>
+    </>
   )
 }
 

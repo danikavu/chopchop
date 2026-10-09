@@ -26,6 +26,7 @@ dev = ["pytest>=8", "httpx>=0.27"]
 
 [project.scripts]
 chopper = "chopper.cli:main"
+chopchop = "chopper.cli:main"
 
 [build-system]
 requires = ["setuptools>=68"]

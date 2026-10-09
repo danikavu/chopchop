@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api } from '../api'
 import type { BatchJob, FolderListing, Meta, Workflow } from '../types'
+import { Logo } from './Brand'
 import { FolderPicker } from './FolderPicker'
 import { JobProgress } from './JobProgress'
 import { WorkflowEditor } from './WorkflowEditor'
@@ -101,6 +102,8 @@ export function BatchView({ meta, onOpenProject }: Props) {
         <button className="link" onClick={() => (location.hash = '')}>← Projects</button>
         <h1 className="title">Batch</h1>
         <span className="muted">Run a workflow over a whole folder (e.g. an album → a drum kit per song)</span>
+        <div className="spacer" />
+        <Logo />
       </header>
 
       <div className="batch-body">
@@ -169,7 +172,7 @@ export function BatchView({ meta, onOpenProject }: Props) {
             <p className="tip">
               Each run gets its own folder inside, one subfolder per song (<code>stems/</code>, <code>kit/</code>,{' '}
               <code>samples/</code>) and a <code>chopper-batch.json</code> summary.
-              {!output && ' Empty = Chopper’s data folder.'}
+              {!output && ' Empty = ChopChop’s data folder.'}
             </p>
           </section>
 

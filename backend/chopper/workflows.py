@@ -4,7 +4,7 @@ A workflow is a chain of optional steps, all driven by the same operations as th
 
     separate -> stem tools -> tempo / key -> drum kit / sound bits -> export
 
-Each song becomes a Chopper project (kept, or deleted after export) and gets its own
+Each song becomes a ChopChop project (kept, or deleted after export) and gets its own
 folder in the output: <output>/<batch>/<song>/{stems,kit,samples}/ plus a summary
 (chopper-batch.json) for the whole batch.
 """
@@ -78,7 +78,7 @@ class Workflow(BaseModel):
     kit: KitStep = KitStep()
     bits: BitsStep = BitsStep()
     export: ExportStep = ExportStep()
-    keep_projects: bool = True  # keep each song as a Chopper project to tweak later
+    keep_projects: bool = True  # keep each song as a ChopChop project to tweak later
 
 
 PRESETS: list[Workflow] = [

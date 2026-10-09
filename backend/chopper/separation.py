@@ -135,7 +135,7 @@ Progress = Callable[[float, str], None]
 log = logging.getLogger(__name__)
 
 # Terminal use (the CLI): keep audio-separator's INFO logs and its console progress bars
-# out of the output; Chopper reports progress itself.
+# out of the output; ChopChop reports progress itself.
 QUIET = False
 LAST_RUN: dict = {}  # what the most recent model run used and how long it took (benchmark)
 

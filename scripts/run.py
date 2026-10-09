@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Cross-platform task runner for Chopper (macOS, Linux, Windows). Standard library only,
+"""Cross-platform task runner for ChopChop (macOS, Linux, Windows). Standard library only,
 so it runs with any Python 3.10+ before the virtualenv exists.
 
     python scripts/run.py install [--gpu auto|cuda|directml|cpu] [--no-separation]
     python scripts/run.py build                       # build the UI into frontend/dist
-    python scripts/run.py run [chopper args…]         # build the UI and start Chopper
+    python scripts/run.py run [chopper args…]         # build the UI and start ChopChop
     python scripts/run.py dev                         # API (auto-reload) + Vite hot reload
     python scripts/run.py test                        # pytest + TypeScript typecheck
     python scripts/run.py batch FOLDER -w "Drum kit per song" [options]   # see: batch --help
@@ -151,7 +151,7 @@ def install(args: argparse.Namespace) -> None:
         print(f"\nStem separation will run on: {device or 'unknown (check the log above)'}")
     sh(npm(), "install", cwd=FRONTEND)
     ffmpeg_hint()
-    print("Done. Start Chopper with: python scripts/run.py run")
+    print("Done. Start ChopChop with: python scripts/run.py run")
 
 
 def build(_args: argparse.Namespace | None = None) -> None:
@@ -207,7 +207,7 @@ def test(_args: argparse.Namespace) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Chopper task runner")
+    parser = argparse.ArgumentParser(description="ChopChop task runner")
     sub = parser.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("install", help="create .venv and install Python + npm dependencies")
     p.add_argument("--no-separation", action="store_true", help="skip audio-separator/PyTorch (much smaller)")
@@ -216,7 +216,7 @@ def main() -> None:
                         "either way), cuda, directml (AMD/Intel on Windows, experimental) or cpu")
     p.set_defaults(fn=install)
     sub.add_parser("build", help="build the UI").set_defaults(fn=build)
-    sub.add_parser("run", help="build the UI and start Chopper; extra flags (e.g. --port 9000 "
+    sub.add_parser("run", help="build the UI and start ChopChop; extra flags (e.g. --port 9000 "
                    "--no-browser) are passed on").set_defaults(fn=run)
     sub.add_parser("dev", help="API with auto-reload + Vite hot reload").set_defaults(fn=dev)
     sub.add_parser("test", help="pytest + typecheck").set_defaults(fn=test)

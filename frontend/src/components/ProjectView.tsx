@@ -5,6 +5,7 @@ import type { Job, Meta, Project, Sample, Slice } from '../types'
 import { fmtTime, gridPoints, isDrumTrack, isTextEntry, label, snapTo, stopPreview, trackColor, useJob } from '../util'
 import { DrumPads } from './DrumPads'
 import { BeatGrid } from './BeatGrid'
+import { Logo } from './Brand'
 import { JobProgress, SEPARATION_STEPS } from './JobProgress'
 import { KitPanel } from './KitPanel'
 import { SampleBrowser } from './SampleBrowser'
@@ -518,6 +519,7 @@ export function ProjectView({ pid, meta, onBack }: Props) {
           </button>
         )}
         <button onClick={() => fileInput.current?.click()}>Import stems…</button>
+        <Logo />
       </header>
 
       {(!hasStems || showSeparate) && !sepJobId && (

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api'
+import { Logo } from './Brand'
 import type { ProjectSummary } from '../types'
 
 export function ProjectList({ onOpen }: { onOpen: (pid: string) => void }) {
@@ -27,11 +28,14 @@ export function ProjectList({ onOpen }: { onOpen: (pid: string) => void }) {
   }
 
   return (
+    <>
+    <header className="topbar">
+      <b className="title">Projects</b>
+      <button className="link" onClick={() => (location.hash = '#/batch')}>Batch</button>
+      <div className="spacer" />
+      <Logo />
+    </header>
     <div className="home">
-      <div className="brand">
-        <h1>Chopper</h1>
-        <p className="muted">Slice tracks and stems, build drum kits, cut sound bits.</p>
-      </div>
 
       <button className="batch-link" onClick={() => (location.hash = '#/batch')}>
         <strong>Batch a whole folder →</strong>
@@ -90,5 +94,6 @@ export function ProjectList({ onOpen }: { onOpen: (pid: string) => void }) {
         </div>
       )}
     </div>
+    </>
   )
 }
