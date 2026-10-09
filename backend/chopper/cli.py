@@ -93,6 +93,8 @@ def _apply_overrides(wf, a):
         wf.separate.stems = _csv(a.stems)
     if a.no_separate:
         wf.separate.enabled = False
+    if a.no_debleed:
+        wf.separate.debleed = False
     if a.rest is not None:
         wf.separate.rest = a.rest
     if a.tool:
@@ -486,6 +488,8 @@ def build_parser() -> argparse.ArgumentParser:
     w.add_argument("--stems", metavar="LIST", help='stems to keep, e.g. "vocals,bass" or "all"')
     _bool_flag(w, "rest", "rest", "mix the stems not kept into one extra track", "drop the stems not kept")
     w.add_argument("--no-separate", action="store_true", help="skip separation (work on the mix)")
+    w.add_argument("--no-debleed", action="store_true",
+                   help="don't move drum bleed out of other / guitar / piano (saves one fast pass per stem)")
     w.add_argument("--tool", action="append", metavar="TOOL:STEM",
                    help="add a stem tool, e.g. drumsep:drums, dereverb:vocals, karaoke:vocals (repeatable)")
     w.add_argument("--no-tools", action="store_true", help="drop the workflow's stem tools")

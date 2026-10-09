@@ -134,6 +134,15 @@ lighter engine without PyTorch. You can then import stems you already have (e.g.
 
      The bass-*specialist* models audio-separator offers (kuielab bass, 10.4 dB) score
      lower than Demucs, so they aren't included.
+   - **Remove drum bleed** is on by default whenever the model has a drums stem:
+     - The separation models leave faint drums in "other" (and guitar / piano). Those
+       sharp attacks then won onset detection, so sound bits cut from "other" came out
+       as drum hits.
+     - One extra fast Demucs pass per stem finds that bleed. It's subtracted from the
+       stem and added to "drums", so nothing is lost and the stems still sum to the mix.
+     - On a test song, the drums left in "other" fell from −35.6 dB to −60.7 dB.
+     - Bass is left alone, because the pass would pull out 808s.
+     - Turn it off in the panel, or with `--no-debleed` on the command line.
    - **Two-stage** (Mel-Band vocals → Demucs 6-stem, or → Demucs fine-tuned):
      - Stage 1 takes the vocals out with the best vocal model.
      - Stage 2 runs Demucs on the *instrumental*, so no vocals leak into drums, bass,
@@ -340,6 +349,14 @@ Everything is heuristic DSP (librosa/numpy), with no training data.
     - *half/double*: how sure it isn't half or double time.
   - Half/double time is the classic ambiguity (72 vs 144). The panel lists the
     alternatives, and ÷2 / ×2 buttons, typing a value or tap tempo override it.
+- **Sound bits from pitched stems** (other, vocals, guitar, piano, bass):
+  - Cut points are found on the stem's *harmonic* part, so leftover drum transients
+    can't choose them.
+  - Bits that are mostly percussive are dropped, and so are kick-like bits (except on
+    bass, where 808s belong).
+  - On a test with −20 dB drum bleed, every bit from "other" was a chord rather than a
+    drum hit.
+  - Drum stems and the full mix keep their hits.
 - **Key.** One-shots under 1.5 s get a note from pYIN pitch tracking (e.g. `F#1`). Longer
   bits get a key from chroma matched against Krumhansl–Kessler profiles (e.g. `A min`).
   Relative major and minor keys can be confused on short phrases, so keys are editable.

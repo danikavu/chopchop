@@ -45,6 +45,7 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(separation, "status", lambda: {"available": True, "reason": None})
     monkeypatch.setattr(separation, "separate", fake_separate)
     monkeypatch.setattr(separation, "run_tool", fake_tool)
+    monkeypatch.setattr(separation, "debleed", lambda stems, out, progress=None: stems)
     album = tmp_path / "My Album"
     album.mkdir()
     for i, bpm in enumerate((96, 120)):

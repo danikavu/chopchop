@@ -44,7 +44,7 @@ export function KitPanel({ pid, tracks, onDone }: Props) {
     if (j.status === 'error') setError(j.error)
     else {
       const n = (j.result as { samples: string[] }).samples.length
-      setLast(`${n} samples added`)
+      setLast(n ? `${n} samples added` : 'Nothing cut: this track has no audible sounds of its own (only faint leftovers)')
       onDone()
     }
   })
@@ -123,7 +123,7 @@ export function KitPanel({ pid, tracks, onDone }: Props) {
       </section>
 
       {busy && <JobProgress job={job} fallback="Working…" />}
-      {last && <div className="result">{last} — see the sample browser below.</div>}
+      {last && <div className="result">{last}{last.endsWith('added') ? ' — see the sample browser below.' : ''}</div>}
       {error && <div className="error">{error}</div>}
       <p className="tip">Re-running on the same track replaces the samples it made last time (manual ones are kept).</p>
     </div>

@@ -155,6 +155,7 @@ def extract(
     kit_size: int | None = None,
     progress: Progress = _noop,
     ref_peak: float | None = None,
+    floor_peak: float | None = None,
 ) -> list[dict]:
     """Build sample records (not yet saved) from a track.
 
@@ -165,6 +166,9 @@ def extract(
     ref_peak: level that "loud" is measured against (default: this track's peak). Pass
         the loudest of several related tracks (e.g. split drum parts) so a part that only
         holds faint leftovers from the split yields nothing.
+    floor_peak: absolute level a sound must reach to count at all, e.g. "audible in the
+        song" (the mix's peak -40 dB). Without it a near-silent stem (an "other" that
+        only holds traces of drum bleed) still looks full of hits relative to itself.
     """
     src = project_dir / track["file"]
     progress(0.02, "Loading audio…")
@@ -181,11 +185,25 @@ def extract(
     else:
         raise ValueError(f"unknown mode: {mode}")
 
+    # Sound bits from a pitched stem (other, vocals, bass, guitar…): stems carry some drum
+    # bleed, and bleed is all sharp attacks, so it wins onset detection over soft synth /
+    # pad attacks and every bit comes out a drum hit. Find the cuts on the harmonic part
+    # (drum-like transients removed) and drop bits that are mostly percussive. Audio is
+    # still cut from the original. Drum tracks and the full mix keep their hits.
+    melodic = mode != "drums" and not analysis.is_drum_track(track["name"]) \
+        and analysis.category_for_track(track["name"]) != "mix"
+    if melodic:
+        progress(0.04, "Separating tones from drum-like transients…")
+        y_det = librosa.effects.harmonic(y, margin=2.0)
+        perc = y - y_det
+    else:
+        y_det, perc = y, None
+
     progress(0.08, "Detecting hits…")
     min_gap = 0.05 if mode == "drums" else 0.15
-    onsets = detect_onsets(y, sr, sensitivity=sensitivity, min_gap=min_gap, gate_db=-35.0)
+    onsets = detect_onsets(y_det, sr, sensitivity=sensitivity, min_gap=min_gap, gate_db=-35.0)
     if mode == "phrases":
-        regions = _regions_from_silence(y, sr, onsets, min_len, max_len)
+        regions = _regions_from_silence(y_det, sr, onsets, min_len, max_len)
     else:
         regions = _regions_from_onsets(onsets, sr, len(y), max_len)
     if not regions:
@@ -202,14 +220,20 @@ def extract(
         if i % 10 == 0:
             progress(0.1 + 0.6 * i / len(regions), f"Analysing hit {i + 1}/{len(regions)}…")
         if mode != "phrases":
-            b = a + trim_tail(y[a:b], sr, pre=y[max(0, a - int(0.04 * sr)):a])
+            b = a + trim_tail(y_det[a:b], sr, pre=y_det[max(0, a - int(0.04 * sr)):a])
         if b - a < min_len * sr:
             continue
         seg = y[a:b]
-        # Skip near-silent debris.
-        if 20 * np.log10(np.max(np.abs(seg)) / ref_peak + 1e-12) < -30:
+        if perc is not None and np.sum(perc[a:b] ** 2) > 0.5 * np.sum(seg ** 2):
+            continue  # mostly drum bleed, not a sound from this stem
+        # Skip near-silent debris: quiet within this track, or inaudible in the song.
+        peak = float(np.max(np.abs(seg)))
+        if 20 * np.log10(peak / ref_peak + 1e-12) < -30 or (floor_peak and peak < floor_peak):
             continue
         f = analysis.features(seg, sr, pre=y[max(0, a - int(0.04 * sr)):a])
+        if melodic and default_cat != "bass" and f["decay"] < 0.35 \
+                and analysis.classify_drum(f)[0] == "kick":
+            continue  # kick bleed: its tonal body slips past the percussive check above
         if part == "hihat":  # the hat part holds closed and open hats: tell them apart
             cat, conf = analysis.classify_drum(f)
             cat = cat if cat in ("hihat", "open_hat") else "hihat"

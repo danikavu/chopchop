@@ -20,6 +20,7 @@ def album(tmp_path, monkeypatch):
     monkeypatch.setattr(separation, "status", lambda: {"available": True, "reason": None})
     monkeypatch.setattr(separation, "separate", fake_separate)
     monkeypatch.setattr(separation, "run_tool", fake_tool)
+    monkeypatch.setattr(separation, "debleed", lambda stems, out, progress=None: stems)
     monkeypatch.setattr(separation, "QUIET", False)
     folder = tmp_path / "Album"
     folder.mkdir()

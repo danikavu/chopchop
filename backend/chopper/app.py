@@ -60,6 +60,7 @@ class SeparateReq(BaseModel):
     model: str = "htdemucs_6s.yaml"
     stems: list[str] | None = None  # which stems to keep; None = all the model makes
     rest: bool = True  # mix the stems not kept into one extra track (e.g. "instrumental")
+    debleed: bool = True  # move drum bleed out of other / guitar / piano into drums
     replace: bool = True  # remove the project's current stems first
 
 
@@ -314,7 +315,8 @@ def create_app(store: Store | None = None) -> FastAPI:
             raise HTTPException(400, str(e))
 
         def work(job: Job):
-            return {"tracks": svc.separate(pid, req.model, req.stems, req.rest, req.replace, job.update)}
+            return {"tracks": svc.separate(pid, req.model, req.stems, req.rest, req.replace, job.update,
+                                           debleed=req.debleed)}
 
         return asdict(jobs.submit("separate", pid, work))
 

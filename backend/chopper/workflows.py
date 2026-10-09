@@ -35,6 +35,7 @@ class SeparateStep(BaseModel):
     model: str = "htdemucs_6s.yaml"
     stems: list[str] | None = None  # None = every stem the model makes
     rest: bool = False  # mix the stems not kept into one extra track
+    debleed: bool = True  # move drum bleed out of other / guitar / piano into drums
 
 
 class ToolStep(BaseModel):
@@ -260,7 +261,8 @@ def run_song(svc: Chopper, src: Path, wf: Workflow, out_dir: Path, progress: Pro
             check_cancel()
             if s == "separate":
                 sp = wf.separate
-                kept = svc.separate(pid, sp.model, sp.stems, sp.rest, True, step(i, "separate"), tempo_after=False)
+                kept = svc.separate(pid, sp.model, sp.stems, sp.rest, True, step(i, "separate"), tempo_after=False,
+                                    debleed=sp.debleed)
             elif s.startswith("tool:"):
                 _, tool, on = s.split(":", 2)
                 label = separation.TOOLS[tool]["label"]
@@ -330,7 +332,10 @@ def _bits(svc: Chopper, pid: str, b: BitsStep, progress: Progress, warnings: lis
     for j, s in enumerate(todo):
         def sub(f, m, j=j):
             progress((j + f) / len(todo), m)
-        count += len(svc.build_kit(pid, [s], b.mode, similarity=b.uniqueness, max_per_category=b.max, progress=sub))
+        made = len(svc.build_kit(pid, [s], b.mode, similarity=b.uniqueness, max_per_category=b.max, progress=sub))
+        if not made:
+            warnings.append(f"sound bits: '{s}' has no audible sounds of its own in this song (nothing cut)")
+        count += made
     return count
 
 

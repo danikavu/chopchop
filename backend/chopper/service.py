@@ -73,7 +73,8 @@ class Chopper:
         return keep
 
     def separate(self, pid: str, model: str, stems: list[str] | None = None, rest: bool = True,
-                 replace: bool = True, progress: Progress = _quiet, tempo_after: bool = True) -> list[str]:
+                 replace: bool = True, progress: Progress = _quiet, tempo_after: bool = True,
+                 debleed: bool = True) -> list[str]:
         """Separate the mix; returns the names of the new stem tracks. One undo step."""
         keep = self.check_separate(model, stems)
         p = self.store.get(pid)
@@ -82,6 +83,8 @@ class Chopper:
         out = folder / "separation" / new_id()
         try:
             found = separation.separate(folder / mix["file"], out, model, progress)
+            if debleed:
+                found = separation.debleed(found, out, progress)
             if set(keep) < set(found):
                 dropped = [n for n in found if n not in keep]
                 progress(0.89, f"Mixing {', '.join(dropped)} into {separation.rest_name(keep)}…"
@@ -164,6 +167,10 @@ class Chopper:
         # part holding only faint leftovers of the split yields nothing.
         ref = max(float(np.abs(audio.read(folder / t["file"])[0]).max()) for t in sources) \
             if len(sources) > 1 else None
+        # And everything against the song: a sound more than 40 dB below the mix's peak
+        # is inaudible in it, i.e. leftovers (e.g. drum traces in a near-empty "other").
+        mix = next((t for t in p["tracks"] if t["kind"] == "mix"), None)
+        floor = float(np.abs(audio.read(folder / mix["file"])[0]).max()) * 10 ** (-40 / 20) if mix else None
         recs: list[dict] = []
         for i, t in enumerate(sources):
             def sub(f, m, i=i, t=t):
@@ -172,7 +179,7 @@ class Chopper:
             # A multi-track kit is trimmed to size once, across all tracks.
             size = kit_size if len(sources) == 1 else None
             recs += kits.extract(folder, t, mode, sensitivity, similarity, max_per_category,
-                                 kit_size=size, progress=sub, ref_peak=ref)
+                                 kit_size=size, progress=sub, ref_peak=ref, floor_peak=floor)
         if kit_size and len(sources) > 1:
             recs = kits.select_kit(recs, kit_size)
         progress(0.96, f"Saving {len(recs)} samples…")

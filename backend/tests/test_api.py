@@ -1,5 +1,7 @@
 import io
 import json
+
+import numpy as np
 import time
 import zipfile
 
@@ -276,3 +278,21 @@ def test_anchor_snaps_to_the_hit_near_the_playhead(client):
     bar_starts = t["beats"][t["downbeat"]::4]
     assert min(abs(b - target) for b in bar_starts) < 0.006
     assert client.get(f"/api/projects/{pid}/history").json()["undo"] == "Set bar start"
+
+
+@pytest.mark.parametrize("level_db,expect_bits", [(-90, False), (-30, True)])
+def test_sound_bits_must_be_audible_in_the_song(client, level_db, expect_bits):
+    # An "other" stem far below the mix (only traces of bleed) yields nothing; a quiet
+    # but real part 30 dB down still gives bits.
+    drums, _ = synth.groove(bpm=100, bars=6)
+    n = len(drums)
+    pad = np.zeros(n, np.float32)
+    for k in range(6):
+        a = int((0.2 + k * 2.4) * SR)
+        pad[a:a + int(1.2 * SR)] = synth.tone(57 + (k % 3) * 3, 1.2)[: n - a]
+    quiet = pad * 10 ** (level_db / 20) / np.abs(pad).max() * np.abs(drums).max()
+    pid = client.post("/api/projects", files={"file": ("s.wav", wav(drums + quiet), "audio/wav")}).json()["id"]
+    client.post(f"/api/projects/{pid}/tracks", files={"file": ("Other.wav", wav(quiet), "audio/wav")})
+    j = wait(client, client.post(f"/api/projects/{pid}/kits", json={"track": "other", "mode": "chops"}).json())
+    assert j["status"] == "done", j["error"]
+    assert bool(j["result"]["samples"]) is expect_bits

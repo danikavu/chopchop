@@ -7,6 +7,7 @@ export interface SeparateOptions {
   stems: string[] | null
   rest: boolean
   replace: boolean
+  debleed: boolean
 }
 
 interface Props {
@@ -15,6 +16,10 @@ interface Props {
   onStart: (opts: SeparateOptions) => void
   onCancel?: () => void
 }
+
+/** Stems the models leave drum bleed in (mirrors separation.DEBLEED_STEMS). */
+export const DEBLEED = ['other', 'guitar', 'piano']
+export const canDebleed = (stems: string[]) => stems.includes('drums') && stems.some((s) => DEBLEED.includes(s))
 
 /** Mirrors the backend's name for the track the unselected stems are mixed into. */
 function restName(keep: string[]) {
@@ -32,6 +37,7 @@ export function StemPicker({ meta, hasStems, onStart, onCancel }: Props) {
   const [picked, setPicked] = useState<string[]>(stems)
   const [rest, setRest] = useState(true)
   const [replace, setReplace] = useState(true)
+  const [debleed, setDebleed] = useState(true)
 
   const keep = stems.filter((s) => picked.includes(s))
   const all = keep.length === stems.length
@@ -98,6 +104,12 @@ export function StemPicker({ meta, hasStems, onStart, onCancel }: Props) {
           Mix the other stems into one “{restName(keep)}” track
         </label>
       )}
+      {canDebleed(stems) && (
+        <label className="check" title="The models leave faint drums in these stems, so sound bits cut from them come out as drum hits. One extra fast pass per stem moves that bleed into drums.">
+          <input type="checkbox" checked={debleed} onChange={(e) => setDebleed(e.target.checked)} />
+          Remove drum bleed from {stems.filter((s) => DEBLEED.includes(s)).join(' / ')} (extra fast pass)
+        </label>
+      )}
       {hasStems && (
         <label className="check">
           <input type="checkbox" checked={replace} onChange={(e) => setReplace(e.target.checked)} />
@@ -122,7 +134,7 @@ export function StemPicker({ meta, hasStems, onStart, onCancel }: Props) {
         <div className="spacer" />
         {onCancel && <button onClick={onCancel}>Cancel</button>}
         <button className="primary" disabled={!keep.length}
-          onClick={() => onStart({ model, stems: all ? null : keep, rest, replace })}>
+          onClick={() => onStart({ model, stems: all ? null : keep, rest, replace, debleed })}>
           Separate stems
         </button>
       </div>
