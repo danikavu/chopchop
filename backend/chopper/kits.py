@@ -213,7 +213,9 @@ def extract(
     default_cat = analysis.category_for_track(track["name"])
     # Drum labels only make sense on a drum track; anything else (vocals, bass, the
     # full mix…) is labelled, and named, by its general category.
-    drum_labels = mode == "drums" and analysis.is_drum_track(track["name"])
+    # Sounds cut from a drum track are drum hits in any mode (chops / phrases too), so they're
+    # labelled kick / snare / hat… rather than landing in a catch-all category.
+    drum_labels = analysis.is_drum_track(track["name"])
     part = analysis.drum_part(track["name"]) if drum_labels else None
     cands = []
     for i, (a, b) in enumerate(regions):
