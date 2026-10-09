@@ -350,13 +350,14 @@ Everything is heuristic DSP (librosa/numpy), with no training data.
   - Half/double time is the classic ambiguity (72 vs 144). The panel lists the
     alternatives, and ÷2 / ×2 buttons, typing a value or tap tempo override it.
 - **Sound bits from pitched stems** (other, vocals, guitar, piano, bass):
-  - Cut points are found on the stem's *harmonic* part, so leftover drum transients
-    can't choose them.
-  - Bits that are mostly percussive are dropped, and so are kick-like bits (except on
-    bass, where 808s belong).
-  - On a test with −20 dB drum bleed, every bit from "other" was a chord rather than a
-    drum hit.
-  - Drum stems and the full mix keep their hits.
+  - Drum bleed is mostly removed during separation (see *Remove drum bleed*).
+  - Bits must also be audible in the song (no more than 40 dB below its peak), so a
+    near-empty stem gives nothing rather than leftovers.
+  - Kick-like bits are dropped, except on bass, where 808s belong.
+  - Only the bits about to be kept are checked for being mostly percussive, and the
+    next-best candidate replaces one that is. This costs a few short clips per stem,
+    not a pass over the whole track.
+  - Drum stems and the full mix keep their hits, filed by drum type.
 - **Key.** One-shots under 1.5 s get a note from pYIN pitch tracking (e.g. `F#1`). Longer
   bits get a key from chroma matched against Krumhansl–Kessler profiles (e.g. `A min`).
   Relative major and minor keys can be confused on short phrases, so keys are editable.

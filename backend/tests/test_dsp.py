@@ -139,7 +139,8 @@ def test_layout_pads_mpc_rows():
 
 
 def test_sound_bits_from_other_ignore_drum_bleed(tmp_path):
-    # Chords in some bars, drum bleed at -20 dB everywhere: bits must be chords, not hits.
+    # Chords in some bars, drum bleed everywhere at the level the separation models leave
+    # (~-35 dB; de-bleed takes it much lower): bits must be chords, not hits.
     drums, _ = synth.groove(bpm=100, bars=8)
     n, beat = len(drums), 0.6
     pad = np.zeros(n, np.float32)
@@ -149,14 +150,15 @@ def test_sound_bits_from_other_ignore_drum_bleed(tmp_path):
         pad[a:b] = sum(np.sin(2 * np.pi * 440 * 2 ** ((m - 69) / 12) * tt) for m in (57, 60, 64)) * 0.12 \
             * np.minimum(1, tt / 0.05)
     (tmp_path / "tracks").mkdir()
-    sf.write(tmp_path / "tracks" / "other.wav", pad + 0.1 * drums, SR)
+    bleed = 10 ** (-35 / 20)
+    sf.write(tmp_path / "tracks" / "other.wav", pad + bleed * drums, SR)
     recs = kits.extract(tmp_path, {"name": "other", "file": "tracks/other.wav"}, "chops", max_per_category=16)
     assert recs
 
     def corr(x, y):
         return float(x @ y / np.sqrt((x @ x) * (y @ y) + 1e-12))
 
-    mix = pad + 0.1 * drums
+    mix = pad + bleed * drums
     for r in recs:
         a, b = int(r["start"] * SR), int(r["end"] * SR)
         assert corr(mix[a:b], pad[a:b]) > corr(mix[a:b], drums[a:b]), f"drum bit at {r['start']:.2f}s"
