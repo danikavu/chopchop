@@ -1,5 +1,6 @@
 import type { Meta, Workflow } from '../types'
 import { label } from '../util'
+import { canDebleed, DEBLEED } from './StemPicker'
 
 interface Props {
   meta: Meta
@@ -72,6 +73,12 @@ export function WorkflowEditor({ meta, wf, onChange }: Props) {
             </label>
           ))}
         </div>
+        {canDebleed(modelStems) && (
+          <label className="check" title="Moves the faint drums the models leave in other / guitar / piano into drums, so sound bits from those stems aren't drum hits.">
+            <input type="checkbox" checked={wf.separate.debleed ?? true} onChange={(e) => set('separate', { debleed: e.target.checked })} />
+            Remove drum bleed from {modelStems.filter((s) => DEBLEED.includes(s)).join(' / ')}
+          </label>
+        )}
         {keep.length < modelStems.length && (
           <label className="check">
             <input type="checkbox" checked={wf.separate.rest} onChange={(e) => set('separate', { rest: e.target.checked })} />

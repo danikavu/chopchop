@@ -35,6 +35,7 @@ class SeparateStep(BaseModel):
     model: str = "htdemucs_6s.yaml"
     stems: list[str] | None = None  # None = every stem the model makes
     rest: bool = False  # mix the stems not kept into one extra track
+    debleed: bool = True  # move drum bleed out of other / guitar / piano into drums
 
 
 class ToolStep(BaseModel):
@@ -233,7 +234,14 @@ def run_song(svc: Chopper, src: Path, wf: Workflow, out_dir: Path, progress: Pro
     warnings: list[str] = []
     result: dict = {"song": src.stem, "warnings": warnings}
 
+    timings: dict[str, float] = {}
+    result["timings"] = timings
+    clock = {"step": None, "t": time.time()}
+
     def step(i: int, label: str) -> Progress:
+        if clock["step"]:
+            timings[clock["step"]] = round(time.time() - clock["t"], 1)
+        clock.update(step=label, t=time.time())
         done = sum(w[:i])
 
         def sub(f: float, m: str) -> None:
@@ -253,7 +261,8 @@ def run_song(svc: Chopper, src: Path, wf: Workflow, out_dir: Path, progress: Pro
             check_cancel()
             if s == "separate":
                 sp = wf.separate
-                kept = svc.separate(pid, sp.model, sp.stems, sp.rest, True, step(i, "separate"), tempo_after=False)
+                kept = svc.separate(pid, sp.model, sp.stems, sp.rest, True, step(i, "separate"), tempo_after=False,
+                                    debleed=sp.debleed)
             elif s.startswith("tool:"):
                 _, tool, on = s.split(":", 2)
                 label = separation.TOOLS[tool]["label"]
@@ -282,6 +291,8 @@ def run_song(svc: Chopper, src: Path, wf: Workflow, out_dir: Path, progress: Pro
                 result["samples"] = _bits(svc, pid, wf.bits, step(i, "sound bits"), warnings)
             elif s == "export":
                 result["files"] = _export(svc, pid, wf, kept, out_dir, step(i, "export"))
+        timings[clock["step"]] = round(time.time() - clock["t"], 1)
+        result["seconds"] = round(sum(timings.values()), 1)
         return result
     finally:
         if not wf.keep_projects:
@@ -321,7 +332,10 @@ def _bits(svc: Chopper, pid: str, b: BitsStep, progress: Progress, warnings: lis
     for j, s in enumerate(todo):
         def sub(f, m, j=j):
             progress((j + f) / len(todo), m)
-        count += len(svc.build_kit(pid, [s], b.mode, similarity=b.uniqueness, max_per_category=b.max, progress=sub))
+        made = len(svc.build_kit(pid, [s], b.mode, similarity=b.uniqueness, max_per_category=b.max, progress=sub))
+        if not made:
+            warnings.append(f"sound bits: '{s}' has no audible sounds of its own in this song (nothing cut)")
+        count += made
     return count
 
 
@@ -372,9 +386,31 @@ def _export(svc: Chopper, pid: str, wf: Workflow, kept: list[str], out_dir: Path
     return written
 
 
-def run_batch(svc: Chopper, files: list[Path], wf: Workflow, out_root: Path, job) -> dict:
+def prepare(input_dir: str | Path, files: list[str] | None = None, recursive: bool = False,
+            output_dir: str | Path | None = None) -> tuple[list[Path], Path]:
+    """Resolve a batch request into (audio files, output folder for this run).
+
+    files: subset to process, by file name or path relative to input_dir (None = all).
+    The run folder is <output>/<input folder name> – <date>, numbered if it exists.
+    """
+    folder = Path(input_dir).expanduser()
+    if not folder.is_dir():
+        raise ValueError(f"not a folder: {folder}")
+    found = find_audio(folder, recursive)
+    if files is not None:
+        wanted = set(files)
+        found = [f for f in found if f.name in wanted or str(f.relative_to(folder)) in wanted]
+    if not found:
+        raise ValueError(f"no audio files to process in {folder}")
+    base = Path(output_dir).expanduser() if output_dir else default_output()
+    return found, unique_dir(base / batch_name(folder))
+
+
+def run_batch(svc: Chopper, files: list[Path], wf: Workflow, out_root: Path, job,
+              on_song: Callable[[dict], None] | None = None) -> dict:
     """Run the workflow over files, one song after another. A failing song is recorded
-    and the batch carries on; Cancel stops between steps."""
+    and the batch carries on; Cancel stops between steps. on_song(entry) is called as
+    each song finishes (done or error)."""
     out_root.mkdir(parents=True, exist_ok=True)
     started = time.time()
     songs = [{"file": str(f), "song": f.stem, "status": "queued", "message": ""} for f in files]
@@ -401,6 +437,8 @@ def run_batch(svc: Chopper, files: list[Path], wf: Workflow, out_root: Path, job
                 _write_summary(out_root, wf, songs, started)
                 raise
             entry.update(status="error", message=str(exc) or exc.__class__.__name__)
+        if on_song:
+            on_song(entry)
 
     _write_summary(out_root, wf, songs, started)
     ok = sum(s["status"] == "done" for s in songs)

@@ -112,7 +112,7 @@ export interface ExportResult {
 export interface Workflow {
   name: string
   description: string
-  separate: { enabled: boolean; model: string; stems: string[] | null; rest: boolean }
+  separate: { enabled: boolean; model: string; stems: string[] | null; rest: boolean; debleed: boolean }
   tools: { tool: string; on: string }[]
   tempo: boolean
   key: boolean

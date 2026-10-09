@@ -225,7 +225,6 @@ def estimate(y: np.ndarray, sr: int) -> dict:
 
     # --- global tempo
     bpm0, scores = _best(ac, fps)
-    raw = {round(b, 1): s for b, s in zip(GRID, scores)}
     best = max(scores)
     unrelated = [s for b, s in zip(GRID, scores) if not _related(bpm0, b)]
     clarity = float(np.clip((best - max(unrelated, default=0)) / (best + 1e-9) * 2, 0, 1)) if best > 0 else 0.0

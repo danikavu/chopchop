@@ -45,6 +45,7 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(separation, "status", lambda: {"available": True, "reason": None})
     monkeypatch.setattr(separation, "separate", fake_separate)
     monkeypatch.setattr(separation, "run_tool", fake_tool)
+    monkeypatch.setattr(separation, "debleed", lambda stems, out, progress=None: stems)
     album = tmp_path / "My Album"
     album.mkdir()
     for i, bpm in enumerate((96, 120)):
@@ -149,3 +150,24 @@ def test_save_and_delete_workflow(env):
     assert [w["name"] for w in client.put("/api/workflows", json=wf).json()["saved"]] == ["My acapellas"]
     assert client.get("/api/workflows").json()["saved"][0]["tools"][0]["tool"] == "dereverb"
     assert client.delete("/api/workflows/My acapellas").json()["saved"] == []
+
+
+def test_sample_folders_say_where_sounds_came_from(env):
+    """Bits from the "other" stem go to samples/other; drum chops are kick / snare / hihat,
+    never a catch-all "other" folder."""
+    client, album, _ = env
+    wf = preset("All stems") | {"bits": {"enabled": True, "stems": ["other", "drums"], "mode": "chops",
+                                         "max": 16, "uniqueness": 0.9}}
+    wf["export"] |= {"samples": True}
+    j = run(client, input_dir=str(album), files=["01 Song 1.wav"], workflow=wf)
+    assert j["status"] == "done", j["error"]
+    song = j["result"]["songs"][0]
+    folders = {p.name: sorted(f.name for f in p.iterdir()) for p in (Path(song["output"]) / "samples").iterdir()}
+    project = client.get(f"/api/projects/{song['project']}").json()
+    by_track = {}
+    for s in project["samples"]:
+        by_track.setdefault(s["track"], set()).add(s["category"])
+    assert by_track.get("other", {"other"}) == {"other"}
+    assert by_track["drums"] <= {"kick", "snare", "clap", "hihat", "open_hat", "cymbal", "tom", "perc"}
+    assert all(n.startswith("other_") for n in folders.get("other", []))
+    assert "drums" not in folders  # drum chops are filed by drum type

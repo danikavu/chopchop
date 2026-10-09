@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import warnings
 
 import librosa
@@ -9,7 +10,7 @@ import numpy as np
 from scipy.signal import find_peaks
 
 DRUM_CATEGORIES = ["kick", "snare", "clap", "hihat", "open_hat", "cymbal", "tom", "perc"]
-MELODIC_CATEGORIES = ["vocal", "bass", "keys", "guitar", "synth", "melodic", "fx", "mix", "other"]
+MELODIC_CATEGORIES = ["vocal", "bass", "keys", "guitar", "synth", "other", "instrumental", "melodic", "fx", "mix"]
 CATEGORIES = DRUM_CATEGORIES + MELODIC_CATEGORIES
 
 # Longest cut from a drum track that still counts as a single hit (for key naming).
@@ -140,9 +141,10 @@ def classify_drum(f: dict) -> tuple[str, float]:
 
 
 def is_drum_track(track_name: str) -> bool:
-    """Only drum stems get per-hit drum labels (kick, snare, hat…)."""
+    """Only drum stems get per-hit drum labels (kick, snare, hat…). "no_drums" (everything
+    but the drums) is not one."""
     name = track_name.lower()
-    return "drum" in name or "perc" in name
+    return not name.startswith("no_") and ("drum" in name or "perc" in name)
 
 
 # Tracks made by the drum-split tool ("drums_kick", …): the model already did the labelling.
@@ -157,16 +159,20 @@ def drum_part(track_name: str) -> str | None:
 
 
 def category_for_track(track_name: str) -> str:
-    """General category for everything cut from a non-drum track (also its file-name prefix)."""
+    """Category (and file-name prefix / export folder) for sounds cut from a non-drum
+    track. Known stem types map to their kind; anything else uses the track's own name,
+    so a folder always says where its sounds came from. In particular nothing falls back
+    to "other": that name belongs to the "other" stem."""
     name = track_name.lower()
-    for key, cat in (
-        ("vocal", "vocal"), ("voice", "vocal"), ("bass", "bass"), ("piano", "keys"),
-        ("keys", "keys"), ("guitar", "guitar"), ("synth", "synth"), ("other", "melodic"),
-        ("instrumental", "melodic"), ("mix", "mix"),
-    ):
-        if key in name:
-            return cat
-    return "other"
+    if not name.startswith("no_"):  # "no_bass" is everything *except* the bass
+        for key, cat in (
+            ("vocal", "vocal"), ("voice", "vocal"), ("bass", "bass"), ("piano", "keys"),
+            ("keys", "keys"), ("guitar", "guitar"), ("synth", "synth"), ("other", "other"),
+            ("instrumental", "instrumental"), ("mix", "mix"),
+        ):
+            if key in name:
+                return cat
+    return re.sub(r"[^a-z0-9_]+", "_", name).strip("_") or "sounds"
 
 
 def detect_note(y: np.ndarray, sr: int) -> tuple[str | None, float | None, float]:

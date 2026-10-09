@@ -5,6 +5,11 @@ from __future__ import annotations
 import contextlib
 import functools
 import importlib.util
+import io
+import json
+import logging
+import os
+import time
 import platform
 import re
 import shutil
@@ -127,6 +132,21 @@ TOOLS = {
 }
 
 Progress = Callable[[float, str], None]
+log = logging.getLogger(__name__)
+
+# Terminal use (the CLI): keep audio-separator's INFO logs and its console progress bars
+# out of the output; Chopper reports progress itself.
+QUIET = False
+LAST_RUN: dict = {}  # what the most recent model run used and how long it took (benchmark)
+
+
+class _NullWriter:
+    def write(self, _s: str) -> int:
+        return 0
+
+    def flush(self) -> None:
+        pass
+
 
 # One separation at a time: they saturate the GPU/CPU anyway, and progress capture
 # temporarily swaps audio-separator's tqdm bars (process-wide).
@@ -162,7 +182,8 @@ def device_info() -> dict:
     except ImportError:
         return {"device": "cpu", "name": "CPU", "hint": None}
     if torch.cuda.is_available():
-        return {"device": "cuda", "name": torch.cuda.get_device_name(0), "hint": None}
+        vram = torch.cuda.get_device_properties(0).total_memory / 1024 ** 3
+        return {"device": "cuda", "name": f"{torch.cuda.get_device_name(0)} · {vram:.0f} GB", "hint": None}
     if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
         return {"device": "mps", "name": "Apple GPU (Metal)", "hint": None}
     if _has("torch_directml"):
@@ -246,6 +267,8 @@ class _ProgressCapture:
 
         class Bar(base):  # type: ignore[misc, valid-type]
             def __init__(self, *args, **kwargs):
+                if QUIET:
+                    kwargs["file"] = _NullWriter()
                 super().__init__(*args, **kwargs)
                 if getattr(self, "unit", "") != "iB":
                     cap.pass_no += 1
@@ -277,6 +300,109 @@ class _ProgressCapture:
             setattr(mod, name, value)
         self._saved.clear()
         return False
+
+
+# audio-separator's defaults for these architectures; only batch_size is changed.
+MDX_DEFAULTS = {"hop_length": 1024, "segment_size": 256, "overlap": 0.25, "batch_size": 1, "enable_denoise": False}
+MDXC_DEFAULTS = {"segment_size": 256, "override_model_segment_size": False, "batch_size": 1, "overlap": None,
+                 "pitch_shift": 0}
+
+
+def arch_of(model: str) -> str:
+    """'demucs' (.yaml), 'mdx' (.onnx: MDX-Net) or 'mdxc' (.ckpt: Roformer, MDX23C)."""
+    return "demucs" if model.endswith(".yaml") else "mdx" if model.endswith(".onnx") else "mdxc"
+
+
+def _settings_path() -> Path:
+    return data_dir() / "settings.json"
+
+
+def gpu_settings() -> dict:
+    """Saved per-architecture GPU settings ({"mdx": {"batch": 1, "fp16": false}, …}),
+    written by `chopper benchmark` from measurements on this machine."""
+    try:
+        return json.loads(_settings_path().read_text()).get("gpu", {})
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def save_gpu_settings(gpu: dict) -> None:
+    try:
+        current = json.loads(_settings_path().read_text())
+    except (OSError, json.JSONDecodeError):
+        current = {}
+    current["gpu"] = gpu
+    _settings_path().write_text(json.dumps(current, indent=1))
+
+
+def auto_batch(arch: str) -> int:
+    """A batch size the free VRAM should hold (a *candidate* for `chopper benchmark`,
+    never applied untested: on Windows an oversized batch doesn't fail, the driver
+    spills into system RAM and everything crawls)."""
+    import torch
+
+    free_gb = torch.cuda.mem_get_info()[0] / 1024 ** 3
+    if arch == "mdx":
+        return max(1, min(16, int((free_gb - 1.0) / 0.5)))
+    return max(1, min(8, int((free_gb - 2.0) / 1.0)))
+
+
+def gpu_tuning(model: str = "", force_cpu: bool = False, batch: int | None = None,
+               fp16: bool | None = None) -> dict:
+    """Batch size and fp16 for one run.
+
+    Defaults are audio-separator's own (batch 1, fp32): measured faster than bigger
+    guesses on at least one 6 GB Windows card. They only change through `chopper
+    benchmark` (measured on this machine, saved in settings.json) or the overrides
+    CHOPPER_GPU_BATCH=N / CHOPPER_FP16=0|1. Demucs gets nothing: it has no batch
+    setting and doesn't use autocast. batch / fp16: forced (retries after a failure).
+    """
+    arch = arch_of(model) if model else "mdxc"
+    plain = {"arch": arch, "batch": 1, "fp16": False, "label": ""}
+    if force_cpu or arch == "demucs":
+        return plain
+    try:
+        import torch
+    except ImportError:
+        return plain
+    if not torch.cuda.is_available():
+        return plain  # Apple GPUs: batching measured no faster; CPU: n/a
+    saved = gpu_settings().get(arch, {})
+    env_batch, env_fp16 = os.environ.get("CHOPPER_GPU_BATCH"), os.environ.get("CHOPPER_FP16")
+    if batch is None:
+        batch = int(env_batch) if env_batch and env_batch.isdigit() else int(saved.get("batch", 1))
+    if fp16 is None:
+        fp16 = env_fp16 == "1" if env_fp16 in ("0", "1") else bool(saved.get("fp16", False))
+    batch = max(1, batch)
+    label = " · ".join(x for x in (f"batch {batch}" if batch > 1 else "", "fp16" if fp16 else "") if x)
+    return {"arch": arch, "batch": batch, "fp16": fp16, "label": label}
+
+
+def _log_run(entry: dict) -> None:
+    """One JSON line per separation in <data>/perf.log, to compare speeds over time."""
+    try:
+        with (data_dir() / "perf.log").open("a") as fh:
+            fh.write(json.dumps(entry) + "\n")
+    except OSError:
+        pass
+
+
+def _is_oom(msg: str) -> bool:
+    return any(k in msg for k in ("out of memory", "failed to allocate", "cudnn_status_alloc_failed",
+                                  "cublas_status_alloc_failed"))
+
+
+def _free_gpu_memory() -> None:
+    try:
+        import gc
+
+        import torch
+
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except ImportError:
+        pass
 
 
 def _mps_long_conv():
@@ -324,18 +450,39 @@ def _run_model(src: Path, out_dir: Path, model: str, emit: Progress) -> dict[str
     is_demucs = model.endswith(".yaml")
     info = _info(model)
 
-    def run(force_cpu: bool) -> list[str]:
+    def run(force_cpu: bool, batch: int | None, fp16: bool | None = None) -> list[str]:
         emit(0.02, "Preparing model (downloads on first use)…")
-        sep = Separator(
-            output_dir=str(out_dir),
-            model_file_dir=str(model_dir()),
-            output_format="WAV",
-            use_soundfile=True,  # write WAVs directly instead of through pydub/ffmpeg
-            use_directml=_has("torch_directml"),  # AMD/Intel GPUs on Windows, if installed
-        )
+        tuning = gpu_tuning(model, force_cpu, batch, fp16)
+        extra = {}
+        if tuning["arch"] != "demucs":  # Demucs: exactly audio-separator's defaults
+            extra["use_autocast"] = tuning["fp16"]
+            if tuning["arch"] == "mdx":
+                extra["mdx_params"] = {**MDX_DEFAULTS, "batch_size": tuning["batch"]}
+            else:
+                extra["mdxc_params"] = {**MDXC_DEFAULTS, "batch_size": tuning["batch"]}
+        # onnxruntime prints "Skip loading CUDA and cuDNN DLLs since torch is imported."
+        # on every start on Windows (harmless); pass through anything else it prints.
+        printed = io.StringIO()
+        with contextlib.redirect_stdout(printed):
+            sep = Separator(
+                output_dir=str(out_dir),
+                model_file_dir=str(model_dir()),
+                output_format="WAV",
+                use_soundfile=True,  # write WAVs directly instead of through pydub/ffmpeg
+                use_directml=_has("torch_directml"),  # AMD/Intel GPUs on Windows, if installed
+                log_level=logging.ERROR if QUIET else logging.INFO,
+                **extra,
+            )
+        for line in printed.getvalue().splitlines():
+            if line.strip() and not line.startswith("Skip loading CUDA and cuDNN DLLs"):
+                print(line)
+        run_info.update(device=_device_label(sep) if not force_cpu else "CPU", batch=tuning["batch"],
+                        fp16=tuning["fp16"])
         if force_cpu:
             sep.torch_device = sep.torch_device_cpu
         device = _device_label(sep)
+        if tuning["label"]:
+            device += f" · {tuning['label']}"
         on_mps = getattr(sep.torch_device, "type", "") == "mps"
         # Demucs' long convolutions exceed an MPS size limit; mps_long_conv computes
         # them in chunks (identical results, ~6x faster than CPU on an M-series Mac).
@@ -348,15 +495,54 @@ def _run_model(src: Path, out_dir: Path, model: str, emit: Progress) -> dict[str
         emit(SEPARATE[1], "Writing stems…")
         return files
 
+    batch = None  # None = saved / default setting
+    fp16: bool | None = None
+    run_info: dict = {"model": model, "arch": arch_of(model), "fallback": None}
+    started = time.time()
+    while True:
+        try:
+            files = run(force_cpu=False, batch=batch, fp16=fp16)
+            break
+        except Exception as e:  # noqa: BLE001 - classified below
+            msg = str(e).lower()
+            if "finite" in msg and fp16 is not False and gpu_tuning(model, batch=batch, fp16=fp16)["fp16"]:
+                # Half precision overflowed (seen with MDX23C DrumSep on a 6 GB RTX card):
+                # the model output inf/NaN. Same GPU, same batch, full precision.
+                log.warning("fp16 gave invalid audio with %s; retrying in fp32", model)
+                fp16 = False
+                run_info["fp16_failed"] = True
+                emit(0.02, "Half precision gave invalid audio, retrying in full precision…")
+                continue
+            oom = _is_oom(msg)
+            if oom:
+                _free_gpu_memory()
+                current = batch or gpu_tuning(model)["batch"]
+                if current > 1:
+                    # Too ambitious for this card / this model: same GPU, smaller batch.
+                    batch = max(1, current // 2)
+                    emit(0.02, f"GPU memory full, retrying with batch {batch}…")
+                    continue
+            gpu_error = oom or (isinstance(e, (RuntimeError, NotImplementedError))
+                                and any(k in msg for k in ("mps", "cuda", "directml")))
+            if not gpu_error:
+                raise
+            # GPU trouble (unsupported op, out of memory at batch 1): finish on CPU rather
+            # than fail, but loudly: a silent CPU run looks like "the GPU got slow".
+            log.error("GPU separation with %s failed, falling back to CPU", model, exc_info=True)
+            run_info["fallback"] = str(e)[:300]
+            emit(0.02, f"GPU failed ({str(e)[:80]}), finishing on CPU…")
+            files = run(force_cpu=True, batch=1)
+            break
     try:
-        files = run(force_cpu=False)
-    except (RuntimeError, NotImplementedError) as e:
-        # GPU trouble (unsupported op, out of memory): retry on CPU rather than fail.
-        msg = str(e).lower()
-        if not any(k in msg for k in ("mps", "cuda", "out of memory", "directml")):
-            raise
-        emit(0.02, "GPU failed, retrying on CPU…")
-        files = run(force_cpu=True)
+        import soundfile as sf
+
+        run_info["audio_seconds"] = round(sf.info(str(src)).duration, 1)
+    except Exception:  # noqa: BLE001 - informational only
+        pass
+    run_info.update(seconds=round(time.time() - started, 1), at=time.strftime("%Y-%m-%d %H:%M:%S"))
+    _log_run(run_info)
+    global LAST_RUN
+    LAST_RUN = run_info
 
     aliases = info.get("aliases", {})
     stems: dict[str, Path] = {}
@@ -419,6 +605,47 @@ def run_tool(src: Path, out_dir: Path, tool: str, on_progress: Progress | None =
         stems = _run_model(src, out_dir, t["model"], on_progress or (lambda _p, _m: None))
     names = t["outputs"]
     return {names[k]: stems[k] for k in names if k in stems}
+
+
+# Stems that the separation models leave drum bleed in. Bass is left alone on purpose:
+# a sweep there would pull 808s and kick-like bass notes out of it.
+DEBLEED_STEMS = ("other", "guitar", "piano")
+DEBLEED_MODEL = "htdemucs.yaml"  # the fast one: measured as good as htdemucs_ft for this
+
+
+def debleed(stems: dict[str, Path], out_dir: Path, on_progress: Progress | None = None) -> dict[str, Path]:
+    """Move drum bleed out of "other" (and guitar / piano) into "drums".
+
+    The models leave faint drums in "other"; its sharp attacks then win onset detection,
+    so sound bits cut from "other" come out as drum hits. A drum model run *on the
+    stem itself* finds that bleed (measured on a test song: -35.6 dB -> -59.6 dB, with
+    "other" itself unharmed). It's subtracted from the stem and added to "drums", so
+    nothing is lost and the stems still sum to the mix. Only when there's a drums stem
+    (a vocals/instrumental split's "instrumental" is meant to hold the drums).
+    """
+    import soundfile as sf
+
+    emit = on_progress or (lambda _p, _m: None)
+    targets = [n for n in DEBLEED_STEMS if n in stems]
+    if "drums" not in stems or not targets:
+        return stems
+    drums, sr = sf.read(stems["drums"], dtype="float32", always_2d=True)
+    out = dict(stems)
+    with _lock:
+        for i, name in enumerate(targets):
+            emit(SEPARATE[1], f"Removing drum bleed from {name} ({i + 1}/{len(targets)})…")
+            found = _run_model(stems[name], out_dir / f"debleed_{name}", DEBLEED_MODEL, lambda _p, _m: None)
+            y, _ = sf.read(stems[name], dtype="float32", always_2d=True)
+            bleed, _ = sf.read(found["drums"], dtype="float32", always_2d=True)
+            n = min(len(y), len(bleed), len(drums))
+            clean = out_dir / f"{name}_debleed.wav"
+            sf.write(clean, y[:n] - bleed[:n], sr, subtype="FLOAT")
+            drums = drums[:n] + bleed[:n]
+            out[name] = clean
+    fixed = out_dir / "drums_debleed.wav"
+    sf.write(fixed, drums, sr, subtype="FLOAT")
+    out["drums"] = fixed
+    return out
 
 
 def rest_name(keep: list[str]) -> str:

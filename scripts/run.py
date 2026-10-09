@@ -7,6 +7,8 @@ so it runs with any Python 3.10+ before the virtualenv exists.
     python scripts/run.py run [chopper args…]         # build the UI and start Chopper
     python scripts/run.py dev                         # API (auto-reload) + Vite hot reload
     python scripts/run.py test                        # pytest + TypeScript typecheck
+    python scripts/run.py batch FOLDER -w "Drum kit per song" [options]   # see: batch --help
+    python scripts/run.py workflows                   # list batch workflows
 
 On Windows use `py scripts\\run.py …` if `python` isn't on PATH.
 """
@@ -191,6 +193,13 @@ def dev(_args: argparse.Namespace) -> None:
                 p.kill()
 
 
+def chopper_cli(args: argparse.Namespace) -> None:
+    """Pass straight through to the chopper command line (batch, workflows, workflow)."""
+    py = require_venv()
+    code = subprocess.call([str(py), "-m", "chopper", args.cmd, *args.extra], cwd=ROOT)
+    sys.exit(code)
+
+
 def test(_args: argparse.Namespace) -> None:
     py = require_venv()
     sh(py, "-m", "pytest", "-q")
@@ -211,9 +220,13 @@ def main() -> None:
                    "--no-browser) are passed on").set_defaults(fn=run)
     sub.add_parser("dev", help="API with auto-reload + Vite hot reload").set_defaults(fn=dev)
     sub.add_parser("test", help="pytest + typecheck").set_defaults(fn=test)
+    for name, text in (("batch", "run a workflow over a folder, e.g. batch ~/Music/Album -w \"Drum kit per song\""),
+                       ("workflows", "list batch workflows"), ("workflow", "print a workflow as JSON"),
+                       ("benchmark", "time separation models / GPU settings on this machine")):
+        sub.add_parser(name, help=text, add_help=False).set_defaults(fn=chopper_cli)
     # Unknown flags are forwarded to chopper by `run`; other commands reject them.
     args, extra = parser.parse_known_args()
-    if extra and args.fn is not run:
+    if extra and args.fn not in (run, chopper_cli):
         parser.error(f"unrecognized arguments: {' '.join(extra)}")
     args.extra = extra
     args.fn(args)

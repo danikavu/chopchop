@@ -92,14 +92,17 @@ def _priority(c: dict) -> float:
     return c["score"] * (1 + 0.15 * np.log(c.get("count") or c.get("occurrences") or 1))
 
 
-def _dedupe(cands: list[dict], max_similarity: float, max_per: int) -> list[dict]:
+def _dedupe(cands: list[dict], max_similarity: float, max_per: int,
+            accept: Callable[[dict], bool] | None = None) -> list[dict]:
     """Cluster near-identical hits and keep one representative per cluster.
 
     Hits are visited best-first, so each cluster's representative is its cleanest
     hit; every other hit joins the most similar representative (``count`` = how many
     times that sound occurs). Representatives that are near-identical across
     categories (a snare once misread as a clap) are merged too. Finally each category
-    keeps its ``max_per`` highest-priority sounds.
+    keeps its ``max_per`` highest-priority sounds. accept(c), if given, is asked only
+    about sounds about to be kept (cheap even when it's a costly check); a refused
+    one is skipped and the next-best takes its place.
     """
     reps: list[dict] = []
     for c in sorted(cands, key=lambda c: c["score"], reverse=True):
@@ -121,7 +124,13 @@ def _dedupe(cands: list[dict], max_similarity: float, max_per: int) -> list[dict
     kept: list[dict] = []
     for cat in dict.fromkeys(r["category"] for r in merged):
         group = sorted((r for r in merged if r["category"] == cat), key=_priority, reverse=True)
-        kept.extend(group[:max_per])
+        chosen = 0
+        for r in group:
+            if chosen >= max_per:
+                break
+            if accept is None or accept(r):
+                kept.append(r)
+                chosen += 1
     return kept
 
 
@@ -155,6 +164,7 @@ def extract(
     kit_size: int | None = None,
     progress: Progress = _noop,
     ref_peak: float | None = None,
+    floor_peak: float | None = None,
 ) -> list[dict]:
     """Build sample records (not yet saved) from a track.
 
@@ -165,6 +175,9 @@ def extract(
     ref_peak: level that "loud" is measured against (default: this track's peak). Pass
         the loudest of several related tracks (e.g. split drum parts) so a part that only
         holds faint leftovers from the split yields nothing.
+    floor_peak: absolute level a sound must reach to count at all, e.g. "audible in the
+        song" (the mix's peak -40 dB). Without it a near-silent stem (an "other" that
+        only holds traces of drum bleed) still looks full of hits relative to itself.
     """
     src = project_dir / track["file"]
     progress(0.02, "Loading audio…")
@@ -181,6 +194,12 @@ def extract(
     else:
         raise ValueError(f"unknown mode: {mode}")
 
+    # Sound bits from a pitched stem (other, vocals, guitar…) drop kick-like hits: stems can
+    # carry some drum bleed (mostly removed at separation, see separation.debleed). Drum
+    # tracks and the full mix keep their hits.
+    melodic = mode != "drums" and not analysis.is_drum_track(track["name"]) \
+        and analysis.category_for_track(track["name"]) != "mix"
+
     progress(0.08, "Detecting hits…")
     min_gap = 0.05 if mode == "drums" else 0.15
     onsets = detect_onsets(y, sr, sensitivity=sensitivity, min_gap=min_gap, gate_db=-35.0)
@@ -195,7 +214,9 @@ def extract(
     default_cat = analysis.category_for_track(track["name"])
     # Drum labels only make sense on a drum track; anything else (vocals, bass, the
     # full mix…) is labelled, and named, by its general category.
-    drum_labels = mode == "drums" and analysis.is_drum_track(track["name"])
+    # Sounds cut from a drum track are drum hits in any mode (chops / phrases too), so they're
+    # labelled kick / snare / hat… rather than landing in a catch-all category.
+    drum_labels = analysis.is_drum_track(track["name"])
     part = analysis.drum_part(track["name"]) if drum_labels else None
     cands = []
     for i, (a, b) in enumerate(regions):
@@ -206,10 +227,14 @@ def extract(
         if b - a < min_len * sr:
             continue
         seg = y[a:b]
-        # Skip near-silent debris.
-        if 20 * np.log10(np.max(np.abs(seg)) / ref_peak + 1e-12) < -30:
+        # Skip near-silent debris: quiet within this track, or inaudible in the song.
+        peak = float(np.max(np.abs(seg)))
+        if 20 * np.log10(peak / ref_peak + 1e-12) < -30 or (floor_peak and peak < floor_peak):
             continue
         f = analysis.features(seg, sr, pre=y[max(0, a - int(0.04 * sr)):a])
+        if melodic and default_cat != "bass" and f["decay"] < 0.35 \
+                and analysis.classify_drum(f)[0] == "kick":
+            continue  # kick bleed, not a sound from this stem
         if part == "hihat":  # the hat part holds closed and open hats: tell them apart
             cat, conf = analysis.classify_drum(f)
             cat = cat if cat in ("hihat", "open_hat") else "hihat"
@@ -225,7 +250,14 @@ def extract(
         })
 
     progress(0.72, f"Picking best unique sounds from {len(cands)} candidates…")
-    kept = _dedupe(cands, similarity, max_per_category)
+    def tonal_enough(c: dict) -> bool:
+        """On pitched stems, refuse a bit that's mostly percussive (drum bleed). Checked
+        only for bits about to be kept: a few short clips instead of the whole track."""
+        seg = y[int(c["start"] * sr):int(c["end"] * sr)]
+        harmonic = librosa.effects.harmonic(seg, margin=2.0)
+        return float(np.sum(harmonic ** 2)) >= 0.5 * float(np.sum(seg ** 2) + 1e-12)
+
+    kept = _dedupe(cands, similarity, max_per_category, accept=tonal_enough if melodic else None)
     if kit_size:
         kept = select_kit(kept, kit_size)
 

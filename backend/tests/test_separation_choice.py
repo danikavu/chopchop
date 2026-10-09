@@ -47,6 +47,7 @@ def test_combine_mixes_unselected_stems(tmp_path):
 def client(tmp_path, monkeypatch):
     monkeypatch.setattr(separation, "status", lambda: {"available": True, "reason": None})
     monkeypatch.setattr(separation, "separate", lambda src, out, model, progress=None: fake_stems(out))
+    monkeypatch.setattr(separation, "debleed", lambda stems, out, progress=None: stems)
     c = TestClient(create_app(Store(tmp_path)))
     buf = io.BytesIO()
     sf.write(buf, synth.drum_loop(bars=1)[0], SR, format="WAV")

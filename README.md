@@ -39,6 +39,32 @@ Chopper uses.
   PyTorch 2.3+ and PyTorch no longer publishes Intel-Mac builds. Import stems made
   elsewhere with **Import stems…**; the rest of Chopper works.
 - **Python 3.14.1** isn't supported by audio-separator.
+- **Getting the most out of an NVIDIA GPU:** Chopper uses the separation library's defaults
+  (one chunk at a time, full precision), which are safe on every card. Larger batches
+  and half precision (fp16) can speed up the Roformer, MDX23C and MDX-Net models on some
+  cards and slow them down on others. On Windows, a batch too big for the card doesn't
+  even fail: the driver quietly spills into system RAM and everything crawls. So measure
+  instead of guessing:
+
+  ```sh
+  chopper benchmark "path/to/a typical song.wav"     # or: python scripts/run.py benchmark …
+  ```
+
+  - It times each model on a 30-second clip with each setting: batch 1 or a size based
+    on free VRAM, fp16 on or off.
+  - It prints the times, and saves a setting only if it was clearly faster (≥ 7%)
+    without falling back to CPU. Chopper then uses it for those models.
+  - `--no-save` only reports.
+  - Overrides, set before starting Chopper: `CHOPPER_GPU_BATCH=N` and `CHOPPER_FP16=0|1`.
+  - **Demucs isn't tunable.** It processes one ~7.8 s segment at a time, has no batch
+    setting, and doesn't use fp16, so it uses about 2 GB of VRAM whatever the card. That's
+    expected, not a sign the GPU is idle.
+  - **Every separation is logged** to `perf.log` in the data folder: model, device,
+    settings, seconds, and whether it fell back to CPU. If a GPU run fails, Chopper finishes
+    on the CPU and says so in the progress ("GPU failed (…), finishing on CPU"), so a
+    silent CPU run can't pass for "the GPU got slow".
+  - To see real GPU load on Windows, use Task Manager → Performance → GPU, and switch one of
+    the small graphs from "3D" to **"Cuda"** (or "Compute_0").
 - **Disk:** PyTorch takes a few GB. Each separation model downloads once, on first use,
   and ranges from about 50 MB (Demucs) to several hundred MB (Roformer, MDX23C).
   Projects keep their stems and samples as WAV, so allow a few hundred MB per song.
@@ -108,6 +134,15 @@ lighter engine without PyTorch. You can then import stems you already have (e.g.
 
      The bass-*specialist* models audio-separator offers (kuielab bass, 10.4 dB) score
      lower than Demucs, so they aren't included.
+   - **Remove drum bleed** is on by default whenever the model has a drums stem:
+     - The separation models leave faint drums in "other" (and guitar / piano). Those
+       sharp attacks then won onset detection, so sound bits cut from "other" came out
+       as drum hits.
+     - One extra fast Demucs pass per stem finds that bleed. It's subtracted from the
+       stem and added to "drums", so nothing is lost and the stems still sum to the mix.
+     - On a test song, the drums left in "other" fell from −35.6 dB to −60.7 dB.
+     - Bass is left alone, because the pass would pull out 808s.
+     - Turn it off in the panel, or with `--no-debleed` on the command line.
    - **Two-stage** (Mel-Band vocals → Demucs 6-stem, or → Demucs fine-tuned):
      - Stage 1 takes the vocals out with the best vocal model.
      - Stage 2 runs Demucs on the *instrumental*, so no vocals leak into drums, bass,
@@ -207,6 +242,40 @@ Songs run one after another, with per-song progress. A file that fails is report
 the batch moves on to the next one. **Cancel** stops between steps, and **open** /
 **folder** jump to a song's project or its files.
 
+### Command line
+
+Batches also run from a terminal, with no browser or server needed. Inside the venv the
+command is `chopper`; anywhere, `python scripts/run.py batch …` does the same.
+
+```sh
+chopper workflows                                        # list presets + saved workflows
+chopper batch ~/Music/Album -w "Drum kit per song"       # a drum kit per song
+chopper batch ~/Music/Album -w "All stems" --stems vocals,bass -o ~/Stems
+chopper batch ~/Music/Album -w "Drum kit per song" --kit-size 32 --only "0[1-3]*" --dry-run
+chopper workflow "Acapellas" > mine.json                 # export a workflow, edit it…
+chopper batch ~/Music/Album --workflow-file mine.json    # …and run it
+```
+
+- **Overrides:** flags tweak the chosen workflow for that run only:
+  - separation: `--model`, `--stems`, `--rest` / `--no-rest`, `--no-separate`;
+  - tools: `--tool drumsep:drums` (repeatable), `--no-tools`;
+  - kit and sound bits: `--kit-size`, `--kit-source`, `--no-kit`, `--uniqueness`,
+    `--bits vocals,bass`, `--bits-mode`;
+  - export: `--export-stems all|kept|none|LIST`, `--export-mix`, `--no-bpm-names`,
+    `--no-key-names`, `--normalize`, `--keep-projects` / `--no-keep-projects`;
+  - input/output: `-o DIR`, `-r` (subfolders), `--only PATTERN`.
+
+  `chopper batch --help` lists them all.
+- **`--dry-run`** prints the plan and the track list without processing anything.
+- **Progress:** a live status line (song, step, model download, GPU progress), then one
+  ✓/✗ line per song. `-q` keeps only the per-song lines.
+- **Ctrl+C** stops after the current step, and the results so far stay in the output
+  folder. Press it twice to quit immediately.
+- **Scripting:** `--json` prints the result as JSON on stdout, with progress on stderr.
+  Exit codes: `0` all songs done · `1` some failed · `2` bad usage · `130` cancelled.
+- **Data folder:** the command line and the app share the same data folder, so kept
+  projects show up in the app (`--data DIR` uses another one).
+
 ### Export file names
 
 Every export uses `<name>[_<bpm>bpm][_<key>].wav`:
@@ -280,6 +349,15 @@ Everything is heuristic DSP (librosa/numpy), with no training data.
     - *half/double*: how sure it isn't half or double time.
   - Half/double time is the classic ambiguity (72 vs 144). The panel lists the
     alternatives, and ÷2 / ×2 buttons, typing a value or tap tempo override it.
+- **Sound bits from pitched stems** (other, vocals, guitar, piano, bass):
+  - Drum bleed is mostly removed during separation (see *Remove drum bleed*).
+  - Bits must also be audible in the song (no more than 40 dB below its peak), so a
+    near-empty stem gives nothing rather than leftovers.
+  - Kick-like bits are dropped, except on bass, where 808s belong.
+  - Only the bits about to be kept are checked for being mostly percussive, and the
+    next-best candidate replaces one that is. This costs a few short clips per stem,
+    not a pass over the whole track.
+  - Drum stems and the full mix keep their hits, filed by drum type.
 - **Key.** One-shots under 1.5 s get a note from pYIN pitch tracking (e.g. `F#1`). Longer
   bits get a key from chroma matched against Krumhansl–Kessler profiles (e.g. `A min`).
   Relative major and minor keys can be confused on short phrases, so keys are editable.

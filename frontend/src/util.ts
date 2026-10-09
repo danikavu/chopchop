@@ -48,7 +48,7 @@ export function categoryColor(cat: string): string {
 /** Mirrors the backend: only drum tracks get kick/snare/hat labels. */
 export function isDrumTrack(name: string): boolean {
   const n = name.toLowerCase()
-  return n.includes('drum') || n.includes('perc')
+  return !n.startsWith('no_') && (n.includes('drum') || n.includes('perc'))
 }
 
 /** Tracks made by the "Split drums" tool: drums_kick, drums_snare, … (mirrors the backend). */
