@@ -105,8 +105,14 @@ export interface Meta {
 export interface ExportResult {
   file: string
   path: string
-  url: string
+  url: string | null  // null when written into the export folder
+  folder?: boolean
   count: number
+}
+
+export interface Settings {
+  export_dir: string | null
+  default_batch_output: string
 }
 
 export interface Workflow {

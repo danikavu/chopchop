@@ -189,8 +189,9 @@ lighter engine without PyTorch. You can then import stems you already have (e.g.
      - **Shift grid ◀ ▶** moves the grid 10 ms per click (1 ms with Shift).
      - **Bar starts at beat ◀ n ▶** moves only which beat counts as 1.
      - All of these are undoable.
-   - **Export** writes a zip with one folder per selected track. It runs in the background
-     with a progress bar.
+   - **Export** writes one folder per selected track. It runs in the background with a
+     progress bar.
+   - **Export to** sets where exports go (see [Export folder](#export-folder)).
 3. **Kits & bits** tab: **Build drum kit** on the drum stem (optionally loading it onto the
    pads), or **Extract sound bits**
    (chops or phrases) from any stem. Running it again on the same track replaces the samples
@@ -211,6 +212,23 @@ lighter engine without PyTorch. You can then import stems you already have (e.g.
 5. The **sample browser** groups samples by category. You can play, rename, recategorize and
    set the key of each sample, trim it (✂), or re-detect its key (♪). **Export kit** zips the
    samples currently shown as `kit/<category>/<name>_<key>.wav`.
+
+### Export folder
+
+Choose an export folder once (**Export to → Change…** in the Slices panel, or the batch
+page's output folder) and it is remembered across restarts, in `data/settings.json`. The
+same folder is used for every export:
+
+| Export | Goes to |
+| --- | --- |
+| Slices | `<export folder>/<project>/Slices – <date time>/<track>/…` |
+| Export kit (sample browser) | `<export folder>/<project>/Kit – <date time>/…` |
+| Export pads | `<export folder>/<project>/Pads – <date time>/…` |
+| Batch runs | `<export folder>/<input folder> – <date time>/<song>/…` |
+
+Every export gets a new folder, so nothing is overwritten. The result line has a
+**Show folder** button. **Reset** clears the setting: project exports then download as a
+zip again, and batches go to `data/batches/`.
 
 ### Batch: a whole folder at once
 
@@ -234,7 +252,9 @@ for example an album → a drum kit per song.
    **Sound bits** (stems, chops/phrases, how many) → **Export** (which stems, original
    mix, kit, sound bits, BPM/key in names, normalize). You can also choose whether to
    keep each song as a ChopChop project to fine-tune later.
-3. **Output folder:** optional; the default is ChopChop's data folder. Each run makes
+3. **Output folder:** optional. It starts at the saved [export folder](#export-folder), and
+   a folder you pick here becomes the new export folder. With none set, ChopChop's data
+   folder is used. Each run makes
    `<output>/<folder> – <date>/<song>/{stems,kit,samples}/` plus a `chopper-batch.json`
    summary.
 

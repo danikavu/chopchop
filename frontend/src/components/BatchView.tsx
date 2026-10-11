@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { api } from '../api'
 import type { BatchJob, FolderListing, Meta, Workflow } from '../types'
 import { Logo } from './Brand'
+import { useExportDir } from './ExportFolder'
 import { FolderPicker } from './FolderPicker'
 import { JobProgress } from './JobProgress'
 import { WorkflowEditor } from './WorkflowEditor'
@@ -25,6 +26,12 @@ export function BatchView({ meta, onOpenProject }: Props) {
   const [excluded, setExcluded] = useState<string[]>([])
   const [recursive, setRecursive] = useState(false)
   const [output, setOutput] = useState('')
+  // The saved export folder (shared with project exports) is the starting point.
+  const [exportDir, saveExportDir] = useExportDir()
+  const [touched, setTouched] = useState(false)
+  useEffect(() => {
+    if (!touched && exportDir !== undefined) setOutput(exportDir ?? '')
+  }, [exportDir, touched])
   const [picker, setPicker] = useState<'input' | 'output' | null>(null)
   const [batches, setBatches] = useState<BatchJob[]>([])
   const [error, setError] = useState<string | null>(null)
@@ -34,7 +41,7 @@ export function BatchView({ meta, onOpenProject }: Props) {
     api.workflows().then((r) => {
       setPresets(r.presets)
       setSaved(r.saved)
-      setDefaultOut(r.default_output)
+      api.settings().then((s) => setDefaultOut(s.default_batch_output)).catch(() => setDefaultOut(r.default_output))
       setWf(clone(r.presets[0]))
       setBase(r.presets[0].name)
     }).catch((e) => setError(e.message))
@@ -73,6 +80,7 @@ export function BatchView({ meta, onOpenProject }: Props) {
     setError(null)
     try {
       const files = listing && !recursive ? listing.files.filter((f) => !excluded.includes(f)) : undefined
+      if (output.trim() && output.trim() !== exportDir) await saveExportDir(output.trim())
       await api.startBatch({ input_dir: input, files, recursive, output_dir: output || undefined, workflow: wf })
       void refresh()
     } catch (e) {
@@ -194,12 +202,17 @@ export function BatchView({ meta, onOpenProject }: Props) {
           <section className="card">
             <h2>3 · Output folder</h2>
             <div className="row">
-              <input className="grow path-input" placeholder={defaultOut} value={output} onChange={(e) => setOutput(e.target.value)} />
+              <input className="grow path-input" placeholder={defaultOut} value={output}
+                onChange={(e) => {
+                  setTouched(true)
+                  setOutput(e.target.value)
+                }} />
               <button onClick={() => setPicker('output')}>Browse…</button>
             </div>
             <p className="tip">
               Each run gets its own folder inside, one subfolder per song (<code>stems/</code>, <code>kit/</code>,{' '}
               <code>samples/</code>) and a <code>chopper-batch.json</code> summary.
+              {' '}The folder is remembered and also used for slice / kit exports from a project.
               {!output && ' Empty = ChopChop’s data folder.'}
             </p>
           </section>
@@ -243,7 +256,11 @@ export function BatchView({ meta, onOpenProject }: Props) {
           onClose={() => setPicker(null)}
           onPick={(path) => {
             if (picker === 'input') void loadFolder(path)
-            else setOutput(path)
+            else {
+              setTouched(true)
+              setOutput(path)
+              void saveExportDir(path).catch((e) => setError(e.message))
+            }
             setPicker(null)
           }}
         />

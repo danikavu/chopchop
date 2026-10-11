@@ -3,6 +3,7 @@ import { api } from '../api'
 import { chokeGroupFor, preload, trigger } from '../padEngine'
 import type { ExportResult, Job, Sample, Track } from '../types'
 import { categoryColor, isDrumPart, isDrumTrack, isTextEntry, label, NOT_DRUMS_NOTE, useJob } from '../util'
+import { ExportResultLine } from './ExportFolder'
 import { JobProgress } from './JobProgress'
 
 export const PADS_PER_BANK = 16
@@ -292,11 +293,7 @@ export function DrumPads(p: Props) {
             <kbd>U</kbd>–<kbd>P</kbd> · <kbd>7</kbd>–<kbd>0</kbd> to play. Drag samples from below onto a pad, drag pads to
             swap, right-click to clear.
           </p>
-          {result && (
-            <div className="result">
-              {result.count} sounds → <a href={result.url}>download zip</a>
-            </div>
-          )}
+          {result && <ExportResultLine result={result} noun="sounds" />}
           {error && <div className="error">{error}</div>}
         </div>
       </div>

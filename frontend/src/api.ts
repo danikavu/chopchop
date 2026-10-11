@@ -7,6 +7,7 @@ import type {
   Project,
   ProjectSummary,
   Sample,
+  Settings,
   Slice,
   Tempo,
   Track,
@@ -103,6 +104,8 @@ export const api = {
   batches: () => req<BatchJob[]>('GET', '/api/batches'),
   removeBatch: (jid: string) => req('DELETE', `/api/batches/${jid}`),
   clearBatches: () => req<{ removed: number }>('DELETE', '/api/batches'),
+  settings: () => req<Settings>('GET', '/api/settings'),
+  setExportDir: (export_dir: string | null) => req<Settings>('PUT', '/api/settings', { export_dir }),
   reveal: (path: string) => req('POST', '/api/reveal', { path }),
   projectJobs: (pid: string) => req<Job[]>('GET', `${P(pid)}/jobs`),
 

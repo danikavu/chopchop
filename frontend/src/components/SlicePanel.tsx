@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { api } from '../api'
 import type { ExportResult, Job, Slice, Tempo, Track } from '../types'
 import { GRID_STEPS, label, snapTo, useJob } from '../util'
+import { ExportFolder, ExportResultLine } from './ExportFolder'
 import { JobProgress } from './JobProgress'
 import { Slider } from './Slider'
 
@@ -249,6 +250,7 @@ export function SlicePanel(p: Props) {
             onChange={(e) => setBpmNames(e.target.checked)} />
           BPM in loop names
         </label>
+        <ExportFolder />
         <div className="row">
           <button className="primary" onClick={() => doExport(false)}
             disabled={busy !== null || !p.slices.length || !p.exportTracks.length}>
@@ -259,12 +261,7 @@ export function SlicePanel(p: Props) {
           </button>
         </div>
         {busy === 'export' && <JobProgress job={job} fallback="Exporting…" />}
-        {result && (
-          <div className="result">
-            {result.count} files → <a href={result.url}>download zip</a>
-            <div className="path" title={result.path}>{result.path}</div>
-          </div>
-        )}
+        {result && <ExportResultLine result={result} noun="files" />}
       </section>
       {error && <div className="error">{error}</div>}
     </div>

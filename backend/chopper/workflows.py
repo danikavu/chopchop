@@ -402,7 +402,9 @@ def prepare(input_dir: str | Path, files: list[str] | None = None, recursive: bo
         found = [f for f in found if f.name in wanted or str(f.relative_to(folder)) in wanted]
     if not found:
         raise ValueError(f"no audio files to process in {folder}")
-    base = Path(output_dir).expanduser() if output_dir else default_output()
+    from . import settings
+
+    base = Path(output_dir).expanduser() if output_dir else (settings.export_dir() or default_output())
     return found, unique_dir(base / batch_name(folder))
 
 

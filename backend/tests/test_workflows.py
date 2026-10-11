@@ -190,3 +190,13 @@ def test_remove_and_clear_runs_keep_files(env, monkeypatch):
     assert client.delete("/api/batches").json() == {"removed": 1}  # the finished one, not the running one
     assert [b["id"] for b in client.get("/api/batches").json()] == [running["id"]]
     assert all(o.exists() for o in outputs)  # results on disk are untouched
+
+
+def test_batch_defaults_to_the_saved_export_folder(env):
+    client, album, tmp = env
+    saved = tmp / "Exports"
+    client.put("/api/settings", json={"export_dir": str(saved)})
+    wf = preset("Vocals + bass stems") | {"keep_projects": False}
+    j = run(client, input_dir=str(album), files=["01 Song 1.wav"], workflow=wf)
+    assert j["status"] == "done", j["error"]
+    assert Path(j["result"]["output"]).parent == saved

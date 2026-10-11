@@ -1,6 +1,15 @@
 import os
 import sys
 
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _isolated_data(tmp_path_factory, monkeypatch):
+    """Settings (export folder, GPU tuning) live in the data folder: never read or
+    write the real one from tests."""
+    monkeypatch.setenv("CHOPPER_DATA", str(tmp_path_factory.mktemp("data")))
+
 
 def pytest_unconfigure(config):
     """Exit without running native library teardown.
