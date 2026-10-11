@@ -352,25 +352,7 @@ code { font: 11px ui-monospace, monospace; background: var(--bg); padding: 1px 4
 .logo { display: flex; align-items: center; margin-left: 8px; flex-shrink: 0; }
 .logo img { height: 20px; width: auto; display: block; opacity: 0.95; }
 .logo:hover img { opacity: 1; }
-.stickers {
-  position: fixed; inset: 0; z-index: 0; overflow: hidden; pointer-events: none;
-  perspective: 1000px; transform-style: preserve-3d;
-}
-.stickers img {
-  position: absolute; height: auto; max-width: none; user-select: none; opacity: 0;
-  will-change: transform, opacity;
-  animation-name: sticker-flight; animation-timing-function: linear; animation-iteration-count: infinite;
-}
-/* One flight through depth: fade in, travel z0 → z1 while slowly spinning, fade out. */
-@keyframes sticker-flight {
-  0% { opacity: 0; transform: translate(-50%, -50%) translateZ(var(--z0)) rotate(var(--r0)); }
-  15% { opacity: var(--op); }
-  80% { opacity: var(--op); }
-  100% { opacity: 0; transform: translate(-50%, -50%) translateZ(var(--z1)) rotate(var(--r1)); }
-}
-@media (prefers-reduced-motion: reduce) {
-  .stickers img { animation: none; opacity: var(--op); transform: translate(-50%, -50%) rotate(var(--r0)); }
-}
+.sticker-canvas { position: fixed; inset: 0; width: 100vw; height: 100vh; z-index: 0; pointer-events: none; }
 .app { position: relative; z-index: 1; }
 /* Big empty surfaces stay see-through so the stickers show; panels keep their colour. */
 .home, .batch, .batch-body, .workspace, .main-col { background: transparent; }

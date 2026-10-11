@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useEffect, useRef } from 'react'
 import logo from '../assets/chopchop-logo.png'
 
 /** The ChopChop wordmark for navbars (top right). */
@@ -10,79 +10,314 @@ export function Logo() {
   )
 }
 
-/** Small deterministic PRNG so the sticker layout is the same on every render and page. */
-function mulberry32(seed: number) {
-  return () => {
-    seed |= 0
-    seed = (seed + 0x6d2b79f5) | 0
-    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed)
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
-  }
+// ---------- the sliceable logo background ----------
+
+type Pt = [number, number]
+
+interface Sticker {
+  x: number // centre, screen px
+  y: number
+  w: number // width px (height follows the logo's aspect ratio)
+  rot: number // radians
+  alpha: number
+  born: number // ms, for the fade-in
 }
 
-const COLS = 6
-const ROWS = 6
+interface Piece {
+  poly: Pt[] // in the logo's own (unrotated, centred) coordinates
+  w: number
+  x: number
+  y: number
+  rot: number
+  vx: number // px/s
+  vy: number
+  vr: number // rad/s
+  alpha: number
+  born: number
+}
+
+const RATIO = 67 / 432 // logo height / width
+const SPAWN_MS = 1400 // fade-in of a new logo
+const PIECE_MS = 1700 // how long pieces fall before they're gone
+const GRAVITY = 1400 // px/s²
+const SLICE_SPEED = 1.1 // px/ms: anything slower is just moving the mouse
+const RESPAWN_MS: [number, number] = [2500, 6500]
+
+const rnd = (a: number, b: number) => a + Math.random() * (b - a)
+
+/** Rotate p by -rot around c: screen → logo-local. */
+function toLocal(p: Pt, s: { x: number; y: number; rot: number }): Pt {
+  const dx = p[0] - s.x
+  const dy = p[1] - s.y
+  const c = Math.cos(-s.rot)
+  const n = Math.sin(-s.rot)
+  return [dx * c - dy * n, dx * n + dy * c]
+}
+
+/** Does segment a→b pass through the rect [-hw,hw]×[-hh,hh]? (Liang–Barsky) */
+function crosses(a: Pt, b: Pt, hw: number, hh: number): boolean {
+  let t0 = 0
+  let t1 = 1
+  const dx = b[0] - a[0]
+  const dy = b[1] - a[1]
+  for (const [p, q] of [[-dx, a[0] + hw], [dx, hw - a[0]], [-dy, a[1] + hh], [dy, hh - a[1]]] as Pt[]) {
+    if (p === 0) {
+      if (q < 0) return false
+    } else {
+      const t = q / p
+      if (p < 0) t0 = Math.max(t0, t)
+      else t1 = Math.min(t1, t)
+      if (t0 > t1) return false
+    }
+  }
+  return true
+}
+
+/** Clip polygon to the side of the line (through o, direction d) where side() >= 0. */
+function clipHalf(poly: Pt[], o: Pt, d: Pt, sign: 1 | -1): Pt[] {
+  const side = (p: Pt) => sign * ((p[0] - o[0]) * d[1] - (p[1] - o[1]) * d[0])
+  const out: Pt[] = []
+  for (let i = 0; i < poly.length; i++) {
+    const a = poly[i]
+    const b = poly[(i + 1) % poly.length]
+    const sa = side(a)
+    const sb = side(b)
+    if (sa >= 0) out.push(a)
+    if ((sa >= 0) !== (sb >= 0)) {
+      const t = sa / (sa - sb)
+      out.push([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t])
+    }
+  }
+  return out
+}
+
+function area(poly: Pt[]): number {
+  let s = 0
+  for (let i = 0; i < poly.length; i++) {
+    const [x1, y1] = poly[i]
+    const [x2, y2] = poly[(i + 1) % poly.length]
+    s += x1 * y2 - x2 * y1
+  }
+  return Math.abs(s) / 2
+}
 
 /**
- * Logo "stickers" flying through depth behind the app. Each one sits on a jittered grid
- * cell (spread all over, no clumps) and loops forever along the z axis: about two thirds
- * come in from the distance and fade as they pass the viewer, the rest drift away into
- * the distance. Sizes span ~40-460 px (skewed towards small, a few big), rotation covers
- * the full circle with a slow spin during the flight, and every sticker has its own speed
- * and starting point, so the scene never visibly repeats. Pure CSS transforms / opacity;
- * static when the system asks for reduced motion. Never catches clicks.
+ * Big ChopChop logos behind the app. Swipe the mouse quickly across one and it's cut
+ * in two along the swipe; the pieces fall, tumble and fade, and a new logo grows back
+ * in the emptiest spot a few seconds later. One canvas, idle unless something is
+ * moving; never catches clicks. Static (and unsliceable) with reduced motion.
  */
 export function StickerBackground() {
-  const stickers = useMemo(() => {
-    const rand = mulberry32(0xc40c)
-    const out = []
-    for (let r = 0; r < ROWS; r++) {
-      for (let c = 0; c < COLS; c++) {
-        const incoming = rand() < 0.65
-        const near = 450 // px towards the viewer (perspective is 1000 px: up to ~1.8x)
-        const far = -(1800 + rand() * 1600)
-        const duration = 26 + rand() * 34 // s
-        out.push({
-          left: ((c + 0.05 + rand() * 0.9) / COLS) * 100,
-          top: ((r + 0.05 + rand() * 0.9) / ROWS) * 100,
-          width: 40 + Math.pow(rand(), 2.2) * 420, // mostly small, a few large
-          rotate: rand() * 360 - 180,
-          spin: (rand() - 0.5) * 120, // degrees over one flight
-          z0: incoming ? far : near * rand(),
-          z1: incoming ? near : far,
-          opacity: 0.03 + rand() * 0.045,
-          duration,
-          delay: -rand() * duration, // start mid-flight, so the screen is full at once
-        })
+  const canvas = useRef<HTMLCanvasElement>(null)
+
+  useEffect(() => {
+    const cv = canvas.current!
+    const ctx = cv.getContext('2d')!
+    const img = new Image()
+    img.src = logo
+    const still = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    const stickers: Sticker[] = []
+    const pieces: Piece[] = []
+    const trail: { x: number; y: number; t: number }[] = []
+    const samples: { x: number; y: number; t: number }[] = []
+    const timers: number[] = []
+    let raf = 0
+    let W = 0
+    let H = 0
+
+    const target = () => Math.max(7, Math.min(18, Math.round((W * H) / 110000)))
+
+    /** Share of a logo at p that would be hidden behind solid UI (cards, lanes, panels). */
+    const covered = (p: Pt, w: number) => {
+      const h = w * RATIO
+      const probes: Pt[] = [p, [p[0] - w * 0.35, p[1]], [p[0] + w * 0.35, p[1]], [p[0], p[1] - h * 0.3], [p[0], p[1] + h * 0.3]]
+      let hidden = 0
+      for (const [x, y] of probes) {
+        let el = document.elementFromPoint(Math.max(0, Math.min(W - 1, x)), Math.max(0, Math.min(H - 1, y)))
+        while (el && el !== document.body) {
+          const bg = getComputedStyle(el).backgroundColor
+          if (bg && bg !== 'transparent' && !bg.endsWith(', 0)')) {
+            hidden++
+            break
+          }
+          el = el.parentElement
+        }
+      }
+      return hidden / probes.length
+    }
+
+    /** Best-candidate placement: of many random spots, the one that's most visible and
+     * farthest from the other logos. */
+    const spawn = (now: number, fadeIn: boolean) => {
+      const w = rnd(260, 720)
+      let best: Pt = [rnd(0, W), rnd(0, H)]
+      let bestScore = -Infinity
+      for (let k = 0; k < 24; k++) {
+        const p: Pt = [rnd(w * 0.15, W - w * 0.15), rnd(50, H - 30)]
+        const spacing = stickers.length
+          ? Math.min(...stickers.map((s) => Math.hypot(s.x - p[0], (s.y - p[1]) * 2.4) - (s.w + w) * 0.45))
+          : 0
+        const score = spacing - covered(p, w) * 900
+        if (score > bestScore) {
+          bestScore = score
+          best = p
+        }
+      }
+      stickers.push({ x: best[0], y: best[1], w, rot: rnd(-0.75, 0.75), alpha: rnd(0.045, 0.085), born: fadeIn ? now : -1e9 })
+    }
+
+    const resize = () => {
+      const dpr = window.devicePixelRatio || 1
+      W = window.innerWidth
+      H = window.innerHeight
+      cv.width = W * dpr
+      cv.height = H * dpr
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+      for (let i = stickers.length - 1; i >= 0; i--) {
+        if (stickers[i].x > W + 100 || stickers[i].y > H + 60) stickers.splice(i, 1)
+      }
+      if (filled) while (stickers.length < target()) spawn(performance.now(), false)
+      draw(performance.now())
+    }
+    // First fill once the page has rendered, so placement can see what's on it.
+    let filled = false
+    const fill = () => {
+      filled = true
+      const now = performance.now()
+      while (stickers.length < target()) spawn(now, true)
+      wake()
+    }
+
+    const drawLogo = (x: number, y: number, w: number, rot: number, alpha: number, poly?: Pt[]) => {
+      const h = w * RATIO
+      ctx.save()
+      ctx.globalAlpha = alpha
+      ctx.translate(x, y)
+      ctx.rotate(rot)
+      if (poly) {
+        ctx.beginPath()
+        poly.forEach(([px, py], i) => (i ? ctx.lineTo(px, py) : ctx.moveTo(px, py)))
+        ctx.closePath()
+        ctx.clip()
+      }
+      ctx.drawImage(img, -w / 2, -h / 2, w, h)
+      ctx.restore()
+    }
+
+    const draw = (now: number) => {
+      ctx.clearRect(0, 0, W, H)
+      if (!img.complete) return
+      for (const s of stickers) {
+        const k = Math.min(1, (now - s.born) / SPAWN_MS)
+        const ease = 1 - Math.pow(1 - k, 3)
+        drawLogo(s.x, s.y, s.w * (0.92 + 0.08 * ease), s.rot, s.alpha * ease)
+      }
+      for (const p of pieces) {
+        drawLogo(p.x, p.y, p.w, p.rot, p.alpha * Math.max(0, 1 - (now - p.born) / PIECE_MS), p.poly)
+      }
+      // A faint blade trail along the swipe.
+      for (let i = 1; i < trail.length; i++) {
+        const a = Math.max(0, 1 - (now - trail[i].t) / 220)
+        if (!a) continue
+        ctx.strokeStyle = `rgba(255,255,255,${0.35 * a})`
+        ctx.lineWidth = 2 * a
+        ctx.beginPath()
+        ctx.moveTo(trail[i - 1].x, trail[i - 1].y)
+        ctx.lineTo(trail[i].x, trail[i].y)
+        ctx.stroke()
       }
     }
-    return out
+
+    let last = performance.now()
+    const tick = (now: number) => {
+      const dt = Math.min(0.05, (now - last) / 1000)
+      last = now
+      for (let i = pieces.length - 1; i >= 0; i--) {
+        const p = pieces[i]
+        p.vy += GRAVITY * dt
+        p.x += p.vx * dt
+        p.y += p.vy * dt
+        p.rot += p.vr * dt
+        if (now - p.born > PIECE_MS || p.y - p.w > H) pieces.splice(i, 1)
+      }
+      while (trail.length && now - trail[0].t > 220) trail.shift()
+      draw(now)
+      const busy = pieces.length || trail.length || stickers.some((s) => now - s.born < SPAWN_MS)
+      raf = busy ? requestAnimationFrame(tick) : 0
+    }
+    const wake = () => {
+      if (!raf) {
+        last = performance.now()
+        raf = requestAnimationFrame(tick)
+      }
+    }
+
+    const cut = (s: Sticker, at: Pt, dir: Pt, speed: number, now: number) => {
+      const hw = s.w / 2
+      const hh = (s.w * RATIO) / 2
+      const rect: Pt[] = [[-hw, -hh], [hw, -hh], [hw, hh], [-hw, hh]]
+      const o = toLocal(at, s)
+      const d0 = toLocal([s.x + dir[0], s.y + dir[1]], s)
+      const halves = [clipHalf(rect, o, d0, 1), clipHalf(rect, o, d0, -1)]
+      const full = area(rect)
+      if (halves.some((h) => h.length < 3 || area(h) < full * 0.08)) return false // just a corner
+      // Push each half off the cut, plus a share of the swipe's momentum.
+      const len = Math.hypot(dir[0], dir[1]) || 1
+      const push = Math.min(speed, 2.5) * 120 // px/s: a lightning flick still falls visibly
+      const nx = -dir[1] / len
+      const ny = dir[0] / len
+      halves.forEach((poly, i) => {
+        const away = i === 0 ? 1 : -1
+        pieces.push({
+          poly, w: s.w, x: s.x, y: s.y, rot: s.rot, alpha: s.alpha, born: now,
+          vx: (dir[0] / len) * push + nx * away * rnd(60, 140),
+          vy: (dir[1] / len) * push + ny * away * rnd(60, 140) - rnd(80, 220),
+          vr: away * rnd(0.6, 2.2),
+        })
+      })
+      timers.push(window.setTimeout(() => {
+        spawn(performance.now(), true)
+        wake()
+      }, rnd(...RESPAWN_MS)))
+      return true
+    }
+
+    const onMove = (e: PointerEvent) => {
+      const now = performance.now()
+      const p = { x: e.clientX, y: e.clientY, t: now }
+      samples.push(p)
+      while (samples.length > 2 && now - samples[0].t > 60) samples.shift()
+      const prev = samples.length > 1 ? samples[samples.length - 2] : null
+      if (!prev) return
+      const dt = Math.max(1, now - prev.t)
+      const speed = Math.hypot(p.x - prev.x, p.y - prev.y) / dt
+      if (speed < SLICE_SPEED) return
+      trail.push(p)
+      // Direction smoothed over the last ~60 ms; segment = this mouse step.
+      const first = samples[0]
+      const dir: Pt = [p.x - first.x, p.y - first.y]
+      for (let i = stickers.length - 1; i >= 0; i--) {
+        const s = stickers[i]
+        const a = toLocal([prev.x, prev.y], s)
+        const b = toLocal([p.x, p.y], s)
+        if (!crosses(a, b, s.w / 2, (s.w * RATIO) / 2)) continue
+        if (cut(s, [p.x, p.y], dir, speed, now)) stickers.splice(i, 1)
+      }
+      wake()
+    }
+
+    resize()
+    timers.push(window.setTimeout(fill, 500))
+    img.onload = () => draw(performance.now())
+    window.addEventListener('resize', resize)
+    if (!still) window.addEventListener('pointermove', onMove, { passive: true })
+    return () => {
+      cancelAnimationFrame(raf)
+      timers.forEach((t) => window.clearTimeout(t))
+      window.removeEventListener('resize', resize)
+      window.removeEventListener('pointermove', onMove)
+    }
   }, [])
 
-  return (
-    <div className="stickers" aria-hidden="true">
-      {stickers.map((s, i) => (
-        <img
-          key={i}
-          src={logo}
-          alt=""
-          style={
-            {
-              left: `${s.left}%`,
-              top: `${s.top}%`,
-              width: s.width,
-              '--op': s.opacity,
-              '--r0': `${s.rotate}deg`,
-              '--r1': `${s.rotate + s.spin}deg`,
-              '--z0': `${s.z0}px`,
-              '--z1': `${s.z1}px`,
-              animationDuration: `${s.duration}s`,
-              animationDelay: `${s.delay}s`,
-            } as React.CSSProperties
-          }
-        />
-      ))}
-    </div>
-  )
+  return <canvas ref={canvas} className="sticker-canvas" aria-hidden="true" />
 }
