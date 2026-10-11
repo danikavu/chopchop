@@ -328,6 +328,7 @@ input[type='checkbox'] { accent-color: var(--accent); margin: 0; }
 .path-input { font: 12px ui-monospace, monospace; }
 .song-list { max-height: 220px; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; margin-top: 8px; padding: 8px; background: var(--bg); border-radius: 0; }
 .song-list .check { color: var(--text); }
+.song-list-all { position: sticky; top: -8px; background: var(--bg); padding: 2px 0 6px; border-bottom: 1px solid var(--line); font-weight: 600; display: flex; align-items: center; gap: 6px; }
 .wf-editor { display: flex; flex-direction: column; gap: 6px; margin: 8px 0; }
 .wf-step { border: 1px solid var(--line); border-radius: 0; padding: 10px; background: var(--panel-2); }
 .wf-step.off { opacity: 0.6; }

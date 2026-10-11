@@ -13,7 +13,7 @@ from dataclasses import asdict
 from pathlib import Path
 from urllib.parse import quote
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -475,24 +475,70 @@ def create_app(store: Store | None = None) -> FastAPI:
                       "songs": [{"file": str(f), "song": f.stem, "status": "queued", "message": ""} for f in files]}
         return asdict(job)
 
+    def hidden_runs() -> set[str]:
+        return set(settings.get("hidden_runs", []))
+
+    def hide_runs(paths: list[str]) -> None:
+        # Forget folders that are gone so the list doesn't grow forever.
+        keep = {p for p in hidden_runs() | set(paths) if Path(p).exists()}
+        settings.put("hidden_runs", sorted(keep))
+
+    def project_exists(pid: str) -> bool:
+        try:
+            return (store.path(pid) / "project.json").is_file()
+        except ProjectNotFound:
+            return False
+
+    def disk_runs(scan: list[str]) -> list[dict]:
+        """Runs found on disk (chopper-batch.json) in the export / batch folders and the
+        folders the batch page is looking at, minus hidden ones and this session's own."""
+        folders = [Path(p) for p in scan if p] + [workflows.default_output()]
+        if settings.export_dir():
+            folders.append(settings.export_dir())
+        live = {str(Path(j["detail"]["output"]).resolve()) for j in jobs.of_kind("batch") if j.get("detail")}
+        hidden = hidden_runs()
+        runs = []
+        for r in workflows.find_runs(folders):
+            out = r["detail"]["output"]
+            if out in live or out in hidden:
+                continue
+            for song in r["detail"]["songs"]:  # projects deleted since then: no "open" link
+                if song.get("project") and not project_exists(song["project"]):
+                    song.pop("project", None)
+            runs.append(r)
+        return runs
+
     @app.get("/api/batches")
-    def list_batches():
-        return jobs.of_kind("batch")
+    def list_batches(scan: list[str] = Query(default=[])):
+        runs = jobs.of_kind("batch") + disk_runs(scan)
+        return sorted(runs, key=lambda r: -r["created_at"])
 
     @app.delete("/api/batches/{jid}")
-    def remove_batch(jid: str):
+    def remove_batch(jid: str, scan: list[str] = Query(default=[])):
         """Remove a finished run from the list. Its output files are left alone."""
+        if jid.startswith("disk:"):
+            run = next((r for r in disk_runs(scan) if r["id"] == jid), None)
+            if not run:
+                raise HTTPException(404, "batch not found")
+            hide_runs([run["detail"]["output"]])
+            return {"ok": True}
         job = jobs.get(jid)
         if not job or not job.kind.startswith("batch"):
             raise HTTPException(404, "batch not found")
         if not jobs.remove(jid):
             raise HTTPException(409, "the batch is still running; cancel it first")
+        if job.detail and job.detail.get("output"):
+            hide_runs([str(Path(job.detail["output"]).resolve())])  # so it doesn't come back from disk
         return {"ok": True}
 
     @app.delete("/api/batches")
-    def clear_batches():
+    def clear_batches(scan: list[str] = Query(default=[])):
         """Remove every finished run from the list (running ones stay; files stay)."""
-        return {"removed": jobs.clear("batch")}
+        finished = [j for j in jobs.of_kind("batch") if j["status"] not in ("pending", "running")]
+        on_disk = disk_runs(scan)
+        hide_runs([str(Path(j["detail"]["output"]).resolve()) for j in finished if j.get("detail")]
+                  + [r["detail"]["output"] for r in on_disk])
+        return {"removed": jobs.clear("batch") + len(on_disk)}
 
     @app.post("/api/reveal")
     def reveal(req: RevealReq):

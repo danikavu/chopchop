@@ -200,3 +200,43 @@ def test_batch_defaults_to_the_saved_export_folder(env):
     j = run(client, input_dir=str(album), files=["01 Song 1.wav"], workflow=wf)
     assert j["status"] == "done", j["error"]
     assert Path(j["result"]["output"]).parent == saved
+
+
+def test_earlier_runs_are_found_on_disk(env):
+    client, album, tmp = env
+    out = tmp / "Elsewhere"
+    j = run(client, input_dir=str(album), files=["01 Song 1.wav"], output_dir=str(out), workflow=preset("All stems"))
+    run_dir = Path(j["result"]["output"])
+    # This session's run is listed once, not again from its folder.
+    assert [b["id"] for b in client.get("/api/batches", params={"scan": str(out)}).json()] == [j["id"]]
+
+    (out / "junk").mkdir()
+    (out / "junk" / "chopper-batch.json").write_text("{not json")
+    # A new session (server restart): the run comes back from its chopper-batch.json, when
+    # the batch page looks at the output folder or at the run folder itself.
+    fresh = TestClient(create_app(Store(tmp / "data")))
+    assert fresh.get("/api/batches").json() == []  # not in a folder ChopChop knows about
+    for scan in (out, run_dir):
+        runs = fresh.get("/api/batches", params={"scan": str(scan)}).json()
+        assert len(runs) == 1
+        r = runs[0]
+        assert r["id"].startswith("disk:") and r["status"] == "done" and r["detail"]["from_disk"]
+        assert r["detail"]["output"] == str(run_dir.resolve()) and r["detail"]["workflow"] == "All stems"
+        assert r["detail"]["songs"][0]["status"] == "done" and r["detail"]["songs"][0]["project"]
+
+    song_project = r["detail"]["songs"][0]["project"]
+    fresh.delete(f"/api/projects/{song_project}")
+    r = fresh.get("/api/batches", params={"scan": str(out)}).json()[0]
+    assert "project" not in r["detail"]["songs"][0]  # no "open" link to a deleted project
+
+    # Remove hides it for good (files stay); runs in the saved export folder show up unasked.
+    assert fresh.delete(f"/api/batches/{r['id']}", params={"scan": str(out)}).json() == {"ok": True}
+    assert fresh.get("/api/batches", params={"scan": str(out)}).json() == []
+    assert run_dir.exists()
+    j2 = run(fresh, input_dir=str(album), files=["02 Song 2.wav"], output_dir=str(out), workflow=preset("All stems"))
+    fresh.put("/api/settings", json={"export_dir": str(out)})
+    again = TestClient(create_app(Store(tmp / "data")))
+    runs = again.get("/api/batches").json()
+    assert [Path(b["detail"]["output"]) for b in runs] == [Path(j2["result"]["output"]).resolve()]
+    assert again.delete("/api/batches").json() == {"removed": 1}
+    assert again.get("/api/batches").json() == []

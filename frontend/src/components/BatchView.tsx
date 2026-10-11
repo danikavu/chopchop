@@ -47,7 +47,12 @@ export function BatchView({ meta, onOpenProject }: Props) {
     }).catch((e) => setError(e.message))
   }, [])
 
-  const refresh = useCallback(() => api.batches().then(setBatches).catch(() => undefined), [])
+  // Earlier runs are also read from disk: in the input folder (e.g. a past run's folder)
+  // and the output folder, as well as the saved export / default batch folders.
+  const scan = [listing?.path ?? '', (output || defaultOut).trim()]
+  const scanKey = scan.join('\n')
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const refresh = useCallback(() => api.batches(scan).then(setBatches).catch(() => undefined), [scanKey])
   useEffect(() => {
     void refresh()
     const running = batches.some((b) => b.status === 'running' || b.status === 'pending')
@@ -113,7 +118,7 @@ export function BatchView({ meta, onOpenProject }: Props) {
     const where = b.detail?.output ? `\n\nIts files stay in:\n${b.detail.output}` : ''
     if (!window.confirm(`Remove this run (“${b.detail?.workflow}”) from the list?${where}`)) return
     try {
-      await api.removeBatch(b.id)
+      await api.removeBatch(b.id, scan)
       void refresh()
     } catch (e) {
       setError((e as Error).message)
@@ -122,7 +127,7 @@ export function BatchView({ meta, onOpenProject }: Props) {
   const clearAll = async () => {
     if (!window.confirm(`Remove all ${finished.length} finished runs from the list? Their files stay on disk.`)) return
     try {
-      await api.clearBatches()
+      await api.clearBatches(scan)
       void refresh()
     } catch (e) {
       setError((e as Error).message)
@@ -157,6 +162,21 @@ export function BatchView({ meta, onOpenProject }: Props) {
             {listing && (
               <div className="song-list">
                 {listing.files.length === 0 && <div className="muted">No audio files in this folder.</div>}
+                {listing.files.length > 1 && (
+                  <label className="check song-list-all">
+                    <input type="checkbox" checked={excluded.length === 0}
+                      ref={(el) => {
+                        if (el) el.indeterminate = excluded.length > 0 && count > 0
+                      }}
+                      onChange={() => setExcluded(excluded.length === 0 ? [...listing.files] : [])} />
+                    {count === listing.files.length ? 'All tracks' : `${count} of ${listing.files.length} tracks`}
+                    <span className="spacer" />
+                    {count > 0 && <button className="link" onClick={(e) => {
+                      e.preventDefault()
+                      setExcluded([...listing.files])
+                    }}>Deselect all</button>}
+                  </label>
+                )}
                 {listing.files.map((f) => (
                   <label key={f} className="check">
                     <input type="checkbox" checked={!excluded.includes(f)}
@@ -281,6 +301,11 @@ function BatchCard({ b, onOpenProject, onRemove }: {
       <div className="row">
         <b>{b.detail?.workflow}</b>
         <span className={`status ${b.status}`}>{b.status}</span>
+        {b.detail?.from_disk && (
+          <span className="muted small" title="Read from this run's chopper-batch.json">
+            {new Date(b.created_at * 1000).toLocaleString()}
+          </span>
+        )}
         <div className="spacer" />
         {running && <button onClick={() => api.cancelJob(b.id)}>Cancel</button>}
         {b.detail?.output && <button onClick={() => api.reveal(b.detail!.output)} title={b.detail.output}>Show folder</button>}

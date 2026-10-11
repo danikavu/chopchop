@@ -61,6 +61,11 @@ async function req<T>(method: string, url: string, body?: unknown): Promise<T> {
 const P = (pid: string) => `/api/projects/${pid}`
 const enc = encodeURIComponent
 
+const scanQuery = (scan: string[]) => {
+  const q = scan.filter(Boolean).map((p) => `scan=${encodeURIComponent(p)}`).join('&')
+  return q ? `?${q}` : ''
+}
+
 export const api = {
   meta: () => req<Meta>('GET', '/api/meta'),
 
@@ -101,9 +106,10 @@ export const api = {
   deleteWorkflow: (name: string) => req<{ saved: Workflow[] }>('DELETE', `/api/workflows/${enc(name)}`),
   startBatch: (body: { input_dir: string; files?: string[]; recursive: boolean; output_dir?: string; workflow: Workflow }) =>
     req<BatchJob>('POST', '/api/batches', body),
-  batches: () => req<BatchJob[]>('GET', '/api/batches'),
-  removeBatch: (jid: string) => req('DELETE', `/api/batches/${jid}`),
-  clearBatches: () => req<{ removed: number }>('DELETE', '/api/batches'),
+  // scan: extra folders to look in for earlier runs (chopper-batch.json)
+  batches: (scan: string[] = []) => req<BatchJob[]>('GET', `/api/batches${scanQuery(scan)}`),
+  removeBatch: (jid: string, scan: string[] = []) => req('DELETE', `/api/batches/${enc(jid)}${scanQuery(scan)}`),
+  clearBatches: (scan: string[] = []) => req<{ removed: number }>('DELETE', `/api/batches${scanQuery(scan)}`),
   settings: () => req<Settings>('GET', '/api/settings'),
   setExportDir: (export_dir: string | null) => req<Settings>('PUT', '/api/settings', { export_dir }),
   reveal: (path: string) => req('POST', '/api/reveal', { path }),

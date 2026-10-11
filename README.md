@@ -262,6 +262,17 @@ Songs run one after another, with per-song progress. A file that fails is report
 the batch moves on to the next one. **Cancel** stops between steps, and **open** /
 **folder** jump to a song's project or its files.
 
+Earlier runs are read back from their `chopper-batch.json`, so they stay listed after a
+restart. Runs are found in:
+
+- the export folder;
+- `data/batches/`;
+- the output folder;
+- the input folder you load (e.g. a folder of old exports).
+
+The CLI's runs are included too. **Remove** / **Clear all** only hide runs from the list
+(remembered in `data/settings.json`). Their files stay on disk.
+
 ### Command line
 
 Batches also run from a terminal, with no browser or server needed. Inside the venv the
