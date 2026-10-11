@@ -28,8 +28,9 @@ export function ProjectList({ onOpen }: { onOpen: (pid: string) => void }) {
     }
   }
 
-  // Case-sensitive on purpose: "Song" doesn't match "song".
-  const shown = (projects ?? []).filter((p) => p.name.includes(query))
+  // Case-insensitive: "nestor" finds "Nestor".
+  const needle = query.trim().toLocaleLowerCase()
+  const shown = (projects ?? []).filter((p) => p.name.toLocaleLowerCase().includes(needle))
 
   return (
     <>
@@ -74,7 +75,7 @@ export function ProjectList({ onOpen }: { onOpen: (pid: string) => void }) {
           <div className="row project-list-head">
             <h2>Projects</h2>
             <div className="spacer" />
-            <input className="project-search" type="search" placeholder="Search projects (case-sensitive)"
+            <input className="project-search" type="search" placeholder="Search projects"
               value={query} onChange={(e) => setQuery(e.target.value)} />
           </div>
           {shown.length === 0 && <div className="empty">No project name contains “{query}”.</div>}

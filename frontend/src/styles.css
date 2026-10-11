@@ -366,3 +366,4 @@ body { background: var(--bg); }
 .project-list-head { margin-bottom: 8px; }
 .project-list-head h2 { margin: 0; }
 .project-search { width: 260px; }
+.grid-toggle.on { border-color: #ef4444; color: #fca5a5; }

@@ -28,6 +28,8 @@ interface Props {
   onNudgeGrid: (seconds: number) => void
   dragGrid: boolean
   onDragGrid: (v: boolean) => void
+  showGrid: boolean
+  onShowGrid: (v: boolean) => void
 }
 
 const newId = () => Math.random().toString(16).slice(2, 12).padEnd(10, '0')
@@ -201,6 +203,10 @@ export function SlicePanel(p: Props) {
                   <button onClick={(e) => p.onNudgeGrid(e.shiftKey ? 0.001 : 0.01)}>▶</button>
                 </span>
               </div>
+              <label className="check">
+                <input type="checkbox" checked={p.showGrid} onChange={(e) => p.onShowGrid(e.target.checked)} />
+                Show grid lines on the waveforms
+              </label>
               <label className="check">
                 <input type="checkbox" checked={p.dragGrid} onChange={(e) => p.onDragGrid(e.target.checked)} />
                 Drag grid (grab a red bar line on the waveforms)
