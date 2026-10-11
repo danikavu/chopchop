@@ -171,3 +171,22 @@ def test_sample_folders_say_where_sounds_came_from(env):
     assert by_track["drums"] <= {"kick", "snare", "clap", "hihat", "open_hat", "cymbal", "tom", "perc"}
     assert all(n.startswith("other_") for n in folders.get("other", []))
     assert "drums" not in folders  # drum chops are filed by drum type
+
+
+def test_remove_and_clear_runs_keep_files(env, monkeypatch):
+    client, album, _ = env
+    done = [run(client, input_dir=str(album), files=["01 Song 1.wav"], workflow=preset("All stems")) for _ in range(2)]
+    outputs = [Path(j["result"]["output"]) for j in done]
+
+    slow = fake_separate
+    monkeypatch.setattr(separation, "separate", lambda *a, **k: (time.sleep(0.6), slow(*a, **k))[1])
+    running = client.post("/api/batches", json={"input_dir": str(album), "files": ["02 Song 2.wav"],
+                                                 "workflow": preset("All stems")}).json()
+    assert client.delete(f"/api/batches/{running['id']}").status_code == 409  # cancel first
+    assert client.delete(f"/api/batches/{done[0]['id']}").json() == {"ok": True}
+    assert client.delete(f"/api/batches/{done[0]['id']}").status_code == 404
+    assert {b["id"] for b in client.get("/api/batches").json()} == {done[1]["id"], running["id"]}
+
+    assert client.delete("/api/batches").json() == {"removed": 1}  # the finished one, not the running one
+    assert [b["id"] for b in client.get("/api/batches").json()] == [running["id"]]
+    assert all(o.exists() for o in outputs)  # results on disk are untouched

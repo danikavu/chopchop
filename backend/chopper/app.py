@@ -443,6 +443,21 @@ def create_app(store: Store | None = None) -> FastAPI:
     def list_batches():
         return jobs.of_kind("batch")
 
+    @app.delete("/api/batches/{jid}")
+    def remove_batch(jid: str):
+        """Remove a finished run from the list. Its output files are left alone."""
+        job = jobs.get(jid)
+        if not job or not job.kind.startswith("batch"):
+            raise HTTPException(404, "batch not found")
+        if not jobs.remove(jid):
+            raise HTTPException(409, "the batch is still running; cancel it first")
+        return {"ok": True}
+
+    @app.delete("/api/batches")
+    def clear_batches():
+        """Remove every finished run from the list (running ones stay; files stay)."""
+        return {"removed": jobs.clear("batch")}
+
     @app.post("/api/reveal")
     def reveal(req: RevealReq):
         """Open a folder in Finder / Explorer / the file manager (ChopChop runs locally)."""

@@ -101,6 +101,8 @@ export const api = {
   startBatch: (body: { input_dir: string; files?: string[]; recursive: boolean; output_dir?: string; workflow: Workflow }) =>
     req<BatchJob>('POST', '/api/batches', body),
   batches: () => req<BatchJob[]>('GET', '/api/batches'),
+  removeBatch: (jid: string) => req('DELETE', `/api/batches/${jid}`),
+  clearBatches: () => req<{ removed: number }>('DELETE', '/api/batches'),
   reveal: (path: string) => req('POST', '/api/reveal', { path }),
   projectJobs: (pid: string) => req<Job[]>('GET', `${P(pid)}/jobs`),
 

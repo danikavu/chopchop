@@ -357,3 +357,12 @@ code { font: 11px ui-monospace, monospace; background: var(--bg); padding: 1px 4
 /* Big empty surfaces stay see-through so the stickers show; panels keep their colour. */
 .home, .batch, .batch-body, .workspace, .main-col { background: transparent; }
 body { background: var(--bg); }
+
+/* ---------- batch runs list ---------- */
+.runs-head { margin-bottom: 10px; }
+.runs-head h2 { margin: 0; }
+.runs-toggle { width: 100%; text-align: left; margin: 4px 0 12px; color: var(--muted); }
+.runs-toggle.open { color: var(--text); }
+.project-list-head { margin-bottom: 8px; }
+.project-list-head h2 { margin: 0; }
+.project-search { width: 260px; }

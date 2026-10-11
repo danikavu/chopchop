@@ -88,6 +88,24 @@ class JobRunner:
         job.cancel_requested = True
         return True
 
+    def remove(self, jid: str) -> bool:
+        """Forget a finished job (a running one must be cancelled first)."""
+        with self._lock:
+            job = self._jobs.get(jid)
+            if not job or job.status in ("pending", "running"):
+                return False
+            del self._jobs[jid]
+            return True
+
+    def clear(self, prefix: str) -> int:
+        """Forget every finished job of a kind; running ones stay."""
+        with self._lock:
+            done = [j.id for j in self._jobs.values()
+                    if j.kind.startswith(prefix) and j.status not in ("pending", "running")]
+            for jid in done:
+                del self._jobs[jid]
+            return len(done)
+
     def of_kind(self, prefix: str) -> list[dict]:
         return [asdict(j) for j in sorted(self._jobs.values(), key=lambda j: -j.created_at)
                 if j.kind.startswith(prefix)]
