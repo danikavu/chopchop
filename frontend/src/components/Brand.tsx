@@ -15,12 +15,22 @@ export function Logo() {
 type Pt = [number, number]
 
 interface Sticker {
-  x: number // centre, screen px
+  x: number // centre, screen px (current, incl. bob / sway: what's drawn and sliced)
   y: number
   w: number // width px (height follows the logo's aspect ratio)
-  rot: number // radians
+  rot: number // radians (current)
   alpha: number
   born: number // ms, for the fade-in
+  // Floating: a slow drift of the base position, plus a gentle bob and sway on top.
+  bx: number
+  by: number
+  baseRot: number
+  vx: number // px/s
+  vy: number
+  bob: number // px
+  sway: number // radians
+  freq: number // Hz of the bob / sway
+  phase: number
 }
 
 interface Piece {
@@ -163,7 +173,16 @@ export function StickerBackground() {
           best = p
         }
       }
-      stickers.push({ x: best[0], y: best[1], w, rot: rnd(-0.75, 0.75), alpha: rnd(0.045, 0.085), born: fadeIn ? now : -1e9 })
+      const rot = rnd(-0.75, 0.75)
+      const heading = rnd(0, Math.PI * 2)
+      const speed = still ? 0 : rnd(6, 20) // px/s: a slow float
+      stickers.push({
+        x: best[0], y: best[1], w, rot, alpha: rnd(0.045, 0.085), born: fadeIn ? now : -1e9,
+        bx: best[0], by: best[1], baseRot: rot,
+        vx: Math.cos(heading) * speed, vy: Math.sin(heading) * speed * 0.6,
+        bob: still ? 0 : rnd(6, 16), sway: still ? 0 : rnd(0.02, 0.07),
+        freq: rnd(0.05, 0.12), phase: rnd(0, Math.PI * 2),
+      })
     }
 
     const resize = () => {
@@ -229,9 +248,32 @@ export function StickerBackground() {
     }
 
     let last = performance.now()
+    const FRAME_MS = 1000 / 30 // the float is slow: 30 fps is plenty and halves the work
+    const float = (now: number, dt: number) => {
+      for (const s of stickers) {
+        s.bx += s.vx * dt
+        s.by += s.vy * dt
+        // Wrap around once fully off one edge: re-enter from the opposite side.
+        const mx = s.w / 2 + 20
+        const my = (s.w * RATIO) / 2 + 40
+        if (s.bx < -mx) s.bx = W + mx
+        else if (s.bx > W + mx) s.bx = -mx
+        if (s.by < -my) s.by = H + my
+        else if (s.by > H + my) s.by = -my
+        const t = (now / 1000) * Math.PI * 2 * s.freq + s.phase
+        s.x = s.bx
+        s.y = s.by + Math.sin(t) * s.bob
+        s.rot = s.baseRot + Math.sin(t * 0.7 + 1.3) * s.sway
+      }
+    }
     const tick = (now: number) => {
+      if (!still && now - last < FRAME_MS && !pieces.length && !trail.length) {
+        raf = requestAnimationFrame(tick)
+        return
+      }
       const dt = Math.min(0.05, (now - last) / 1000)
       last = now
+      if (!still) float(now, dt)
       for (let i = pieces.length - 1; i >= 0; i--) {
         const p = pieces[i]
         p.vy += GRAVITY * dt
@@ -242,7 +284,8 @@ export function StickerBackground() {
       }
       while (trail.length && now - trail[0].t > 220) trail.shift()
       draw(now)
-      const busy = pieces.length || trail.length || stickers.some((s) => now - s.born < SPAWN_MS)
+      // Floating logos keep the loop running; with reduced motion it idles when nothing moves.
+      const busy = !still || pieces.length || trail.length || stickers.some((s) => now - s.born < SPAWN_MS)
       raf = busy ? requestAnimationFrame(tick) : 0
     }
     const wake = () => {
