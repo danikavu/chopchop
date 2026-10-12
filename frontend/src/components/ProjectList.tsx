@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api'
+import { Logo } from './Brand'
 import type { ProjectSummary } from '../types'
 
 export function ProjectList({ onOpen }: { onOpen: (pid: string) => void }) {
@@ -7,6 +8,7 @@ export function ProjectList({ onOpen }: { onOpen: (pid: string) => void }) {
   const [uploading, setUploading] = useState(false)
   const [drag, setDrag] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [query, setQuery] = useState('')
 
   const load = () => api.listProjects().then(setProjects).catch((e) => setError(e.message))
   useEffect(() => {
@@ -26,12 +28,19 @@ export function ProjectList({ onOpen }: { onOpen: (pid: string) => void }) {
     }
   }
 
+  // Case-insensitive: "nestor" finds "Nestor".
+  const needle = query.trim().toLocaleLowerCase()
+  const shown = (projects ?? []).filter((p) => p.name.toLocaleLowerCase().includes(needle))
+
   return (
+    <>
+    <header className="topbar">
+      <b className="title">Projects</b>
+      <button className="link" onClick={() => (location.hash = '#/batch')}>Batch</button>
+      <div className="spacer" />
+      <Logo />
+    </header>
     <div className="home">
-      <div className="brand">
-        <h1>Chopper</h1>
-        <p className="muted">Slice tracks and stems, build drum kits, cut sound bits.</p>
-      </div>
 
       <button className="batch-link" onClick={() => (location.hash = '#/batch')}>
         <strong>Batch a whole folder →</strong>
@@ -63,8 +72,14 @@ export function ProjectList({ onOpen }: { onOpen: (pid: string) => void }) {
 
       {projects && projects.length > 0 && (
         <div className="project-list">
-          <h2>Projects</h2>
-          {projects.map((p) => (
+          <div className="row project-list-head">
+            <h2>Projects</h2>
+            <div className="spacer" />
+            <input className="project-search" type="search" placeholder="Search projects"
+              value={query} onChange={(e) => setQuery(e.target.value)} />
+          </div>
+          {shown.length === 0 && <div className="empty">No project name contains “{query}”.</div>}
+          {shown.map((p) => (
             <div key={p.id} className="project-row" onClick={() => onOpen(p.id)}>
               <div>
                 <div className="project-name">{p.name}</div>
@@ -90,5 +105,6 @@ export function ProjectList({ onOpen }: { onOpen: (pid: string) => void }) {
         </div>
       )}
     </div>
+    </>
   )
 }

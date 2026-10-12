@@ -175,7 +175,7 @@ export function WorkflowEditor({ meta, wf, onChange }: Props) {
         <label className="check"><input type="checkbox" checked={wf.export.bpm_names} onChange={(e) => set('export', { bpm_names: e.target.checked })} /> BPM in names</label>
         <label className="check"><input type="checkbox" checked={wf.export.key_names} onChange={(e) => set('export', { key_names: e.target.checked })} /> Key in names</label>
         <label className="check"><input type="checkbox" checked={wf.export.normalize} onChange={(e) => set('export', { normalize: e.target.checked })} /> Normalize</label>
-        <label className="check"><input type="checkbox" checked={wf.keep_projects} onChange={(e) => set('keep_projects', e.target.checked)} /> Keep each song as a Chopper project (to tweak later)</label>
+        <label className="check"><input type="checkbox" checked={wf.keep_projects} onChange={(e) => set('keep_projects', e.target.checked)} /> Keep each song as a ChopChop project (to tweak later)</label>
       </Section>
     </div>
   )

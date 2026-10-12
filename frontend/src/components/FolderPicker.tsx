@@ -9,7 +9,7 @@ interface Props {
   onClose: () => void
 }
 
-/** Browse folders on this computer (Chopper runs locally) and pick one. */
+/** Browse folders on this computer (ChopChop runs locally) and pick one. */
 export function FolderPicker({ title, start, onPick, onClose }: Props) {
   const [listing, setListing] = useState<FolderListing | null>(null)
   const [typed, setTyped] = useState(start ?? '')

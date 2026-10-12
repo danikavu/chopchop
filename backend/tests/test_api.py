@@ -4,6 +4,7 @@ import json
 import numpy as np
 import time
 import zipfile
+from pathlib import Path
 
 import pytest
 import soundfile as sf
@@ -296,3 +297,48 @@ def test_sound_bits_must_be_audible_in_the_song(client, level_db, expect_bits):
     j = wait(client, client.post(f"/api/projects/{pid}/kits", json={"track": "other", "mode": "chops"}).json())
     assert j["status"] == "done", j["error"]
     assert bool(j["result"]["samples"]) is expect_bits
+
+
+def test_export_folder_setting_persists(client, tmp_path):
+    s = client.get("/api/settings").json()
+    assert s["export_dir"] is None and s["default_batch_output"]
+    assert client.put("/api/settings", json={"export_dir": "relative/dir"}).status_code == 400
+    out = tmp_path / "My Exports"
+    assert client.put("/api/settings", json={"export_dir": str(out)}).json()["export_dir"] == str(out)
+    assert out.is_dir()
+    # A fresh server (new session) still has it, and batches default to it.
+    fresh = TestClient(create_app(Store(tmp_path / "other")))
+    assert fresh.get("/api/settings").json()["export_dir"] == str(out)
+    assert fresh.get("/api/workflows").json()["default_output"] == str(out)
+    assert client.put("/api/settings", json={"export_dir": None}).json()["export_dir"] is None
+
+
+def test_project_exports_go_into_the_export_folder(client, tmp_path):
+    out = tmp_path / "exports"
+    client.put("/api/settings", json={"export_dir": str(out)})
+    y, _ = synth.drum_loop(bars=2)
+    pid = new_project_with_drums(client, y)
+    client.patch(f"/api/projects/{pid}", json={"name": "Nestor"})
+
+    client.post(f"/api/projects/{pid}/slices/detect", json={"track": "drums"})
+    j = wait(client, client.post(f"/api/projects/{pid}/slices/export", json={"tracks": ["drums"]}).json())
+    assert j["status"] == "done", j["error"]
+    r = j["result"]
+    assert r["folder"] and r["url"] is None
+    folder = out / "Nestor"
+    slices_dir = next(folder.glob("Slices – *"))
+    assert r["path"] == str(slices_dir)
+    assert len(list((slices_dir / "drums").glob("*.wav"))) == r["count"] > 0
+
+    j = wait(client, client.post(f"/api/projects/{pid}/kits",
+                                 json={"track": "drums", "mode": "drums", "kit_size": 16, "load_pads": True}).json())
+    assert j["status"] == "done", j["error"]
+    kit = client.post(f"/api/projects/{pid}/samples/export", json={"kit_name": "k"}).json()
+    pads = client.post(f"/api/projects/{pid}/samples/export", json={"kit_name": "p", "from_pads": True}).json()
+    assert Path(kit["path"]).parent == folder and Path(kit["path"]).name.startswith("Kit – ")
+    assert Path(pads["path"]).name.startswith("Pads – ")
+    assert len(list(Path(kit["path"]).rglob("*.wav"))) == kit["count"]
+    assert any(p.name.startswith("A01_kick") for p in Path(pads["path"]).rglob("*.wav"))
+    # Same minute again: a new folder, nothing overwritten.
+    again = client.post(f"/api/projects/{pid}/samples/export", json={"kit_name": "k"}).json()
+    assert again["path"] != kit["path"]

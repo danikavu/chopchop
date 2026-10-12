@@ -4,13 +4,14 @@ A workflow is a chain of optional steps, all driven by the same operations as th
 
     separate -> stem tools -> tempo / key -> drum kit / sound bits -> export
 
-Each song becomes a Chopper project (kept, or deleted after export) and gets its own
+Each song becomes a ChopChop project (kept, or deleted after export) and gets its own
 folder in the output: <output>/<batch>/<song>/{stems,kit,samples}/ plus a summary
 (chopper-batch.json) for the whole batch.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import shutil
@@ -78,7 +79,7 @@ class Workflow(BaseModel):
     kit: KitStep = KitStep()
     bits: BitsStep = BitsStep()
     export: ExportStep = ExportStep()
-    keep_projects: bool = True  # keep each song as a Chopper project to tweak later
+    keep_projects: bool = True  # keep each song as a ChopChop project to tweak later
 
 
 PRESETS: list[Workflow] = [
@@ -402,7 +403,9 @@ def prepare(input_dir: str | Path, files: list[str] | None = None, recursive: bo
         found = [f for f in found if f.name in wanted or str(f.relative_to(folder)) in wanted]
     if not found:
         raise ValueError(f"no audio files to process in {folder}")
-    base = Path(output_dir).expanduser() if output_dir else default_output()
+    from . import settings
+
+    base = Path(output_dir).expanduser() if output_dir else (settings.export_dir() or default_output())
     return found, unique_dir(base / batch_name(folder))
 
 
@@ -434,7 +437,7 @@ def run_batch(svc: Chopper, files: list[Path], wf: Workflow, out_root: Path, job
                 entry.update(status="cancelled", message="Cancelled")
                 for later in songs[n + 1:]:
                     later["status"] = "cancelled"
-                _write_summary(out_root, wf, songs, started)
+                _write_summary(out_root, wf, songs, started, "cancelled")
                 raise
             entry.update(status="error", message=str(exc) or exc.__class__.__name__)
         if on_song:
@@ -446,14 +449,72 @@ def run_batch(svc: Chopper, files: list[Path], wf: Workflow, out_root: Path, job
     return {"output": str(out_root), "done": ok, "failed": len(songs) - ok, "songs": songs}
 
 
-def _write_summary(out_root: Path, wf: Workflow, songs: list[dict], started: float) -> None:
+SUMMARY = "chopper-batch.json"
+
+
+def _write_summary(out_root: Path, wf: Workflow, songs: list[dict], started: float, status: str = "done") -> None:
     summary = {
         "workflow": wf.model_dump(),
+        "status": status,
         "started": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(started)),
         "seconds": round(time.time() - started, 1),
         "songs": songs,
     }
-    (out_root / "chopper-batch.json").write_text(json.dumps(summary, indent=1))
+    (out_root / SUMMARY).write_text(json.dumps(summary, indent=1))
+
+
+def find_runs(folders: list[Path]) -> list[dict]:
+    """Earlier batch runs on disk: each folder, and the folders directly inside it, that
+    hold a chopper-batch.json. Returned in the same shape as a live batch job (newest
+    first), so the app lists them next to the runs of this session."""
+    seen: set[Path] = set()
+    runs = []
+    for folder in folders:
+        try:
+            folder = folder.expanduser().resolve()
+            candidates = [folder, *(d for d in folder.iterdir() if d.is_dir())] if folder.is_dir() else []
+        except OSError:
+            continue
+        for d in candidates:
+            if d in seen or not (d / SUMMARY).is_file():
+                continue
+            seen.add(d)
+            run = read_run(d)
+            if run:
+                runs.append(run)
+    return sorted(runs, key=lambda r: -r["created_at"])
+
+
+def read_run(run_dir: Path) -> dict | None:
+    """A run folder's chopper-batch.json as a finished batch job; None if unreadable."""
+    path = run_dir / SUMMARY
+    try:
+        summary = json.loads(path.read_text())
+        songs = summary["songs"]
+        name = summary["workflow"]["name"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    try:
+        started = time.mktime(time.strptime(summary["started"], "%Y-%m-%d %H:%M:%S"))
+    except (KeyError, TypeError, ValueError, OverflowError):
+        started = path.stat().st_mtime
+    ok = sum(s.get("status") == "done" for s in songs)
+    status = summary.get("status") or ("cancelled" if any(s.get("status") == "cancelled" for s in songs) else "done")
+    return {
+        "id": "disk:" + hashlib.sha1(str(run_dir).encode()).hexdigest()[:12],
+        "kind": "batch",
+        "project_id": "batch",
+        "status": status,
+        "progress": 1.0,
+        "message": f"Finished: {ok}/{len(songs)} songs",
+        "result": None,
+        "error": None,
+        "created_at": started,
+        "started_at": started,
+        "finished_at": started + float(summary.get("seconds") or 0),
+        "detail": {"output": str(run_dir), "workflow": name, "songs": songs, "from_disk": True},
+        "cancel_requested": False,
+    }
 
 
 def batch_name(input_dir: Path) -> str:

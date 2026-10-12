@@ -5,6 +5,7 @@ import type { Job, Meta, Project, Sample, Slice } from '../types'
 import { fmtTime, gridPoints, isDrumTrack, isTextEntry, label, snapTo, stopPreview, trackColor, useJob } from '../util'
 import { DrumPads } from './DrumPads'
 import { BeatGrid } from './BeatGrid'
+import { Logo } from './Brand'
 import { JobProgress, SEPARATION_STEPS } from './JobProgress'
 import { KitPanel } from './KitPanel'
 import { SampleBrowser } from './SampleBrowser'
@@ -45,7 +46,23 @@ export function ProjectView({ pid, meta, onBack }: Props) {
   const [tab, setTab] = useState<'slice' | 'kit'>('slice')
   const [editing, setEditing] = useState<Sample | null>(null)
   const [selectedPad, setSelectedPad] = useState<number | null>(null)
-  const [showBeats, setShowBeats] = useState(true)
+  // The red beat grid is optional and off by default; the choice is remembered.
+  const [showBeats, setShowBeatsState] = useState(() => {
+    try {
+      return localStorage.getItem('chopchop.showGrid') === '1'
+    } catch {
+      return false
+    }
+  })
+  const setShowBeats = (v: boolean) => {
+    setShowBeatsState(v)
+    if (!v) setDragGrid(false)
+    try {
+      localStorage.setItem('chopchop.showGrid', v ? '1' : '0')
+    } catch {
+      /* private window etc.: just not remembered */
+    }
+  }
   const [gridStep, setGridStep] = useState(1)
   const [snapEdits, setSnapEdits] = useState(false)
   const grid = useMemo(
@@ -518,6 +535,7 @@ export function ProjectView({ pid, meta, onBack }: Props) {
           </button>
         )}
         <button onClick={() => fileInput.current?.click()}>Import stems…</button>
+        <Logo />
       </header>
 
       {(!hasStems || showSeparate) && !sepJobId && (
@@ -551,6 +569,11 @@ export function ProjectView({ pid, meta, onBack }: Props) {
             <span className="time">{fmtTime(time)}</span>
             <span className="muted">playing: <b style={{ color: trackColor(focused) }}>{label(focused)}</b></span>
             <div className="spacer" />
+            <button className={`grid-toggle ${showBeats ? 'on' : ''}`} onClick={() => setShowBeats(!showBeats)}
+              disabled={!project.tempo?.beats.length}
+              title={project.tempo?.beats.length ? 'Show / hide the beat grid lines' : 'Detect the tempo first (BPM at the top)'}>
+              Grid
+            </button>
             <button onClick={splitAtPlayhead} title="Split / add slice at playhead (S)">Split</button>
             <button onClick={deleteSelected} disabled={!selectedId} title="Delete selected slice (Del)">Delete</button>
             {selected && <span className="muted">{fmtTime(selected.start)} – {fmtTime(selected.end)}</span>}
@@ -685,7 +708,12 @@ export function ProjectView({ pid, meta, onBack }: Props) {
               onAnchor={() => void adjustGrid({ anchor: timeRef.current })}
               onNudgeGrid={(s) => void adjustGrid({ shift: s })}
               dragGrid={dragGrid}
-              onDragGrid={setDragGrid}
+              onDragGrid={(v) => {
+                setDragGrid(v)
+                if (v) setShowBeats(true) // you can't grab lines you can't see
+              }}
+              showGrid={showBeats}
+              onShowGrid={setShowBeats}
               onDownbeat={async (downbeat) => {
                 try {
                   const tempo = await api.setTempo(pid, { downbeat })

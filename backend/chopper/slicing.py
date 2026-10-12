@@ -138,6 +138,29 @@ def slices_from_onsets(
     return out
 
 
+class _FolderSink:
+    """Same writestr() as a ZipFile, writing plain files under a folder."""
+
+    def __init__(self, root: Path):
+        self.root = root
+
+    def writestr(self, name: str, data: bytes) -> None:
+        target = self.root / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(data)
+
+    def __enter__(self):
+        self.root.mkdir(parents=True, exist_ok=True)
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+def _sink(out_dir: Path | None, zip_path: Path):
+    return _FolderSink(out_dir) if out_dir else zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED)
+
+
 def export_slices(
     project_dir: Path,
     tracks: list[dict],
@@ -148,12 +171,14 @@ def export_slices(
     bpm: float | None = None,
     keys: bool = False,
     progress=None,
+    out_dir: Path | None = None,
 ) -> Path:
     """Cut every slice out of every selected track into one zip, one folder per track.
 
     bpm:  tag slices at least ~a beat long with the tempo (drums_004_96bpm.wav).
     keys: detect each slice's key / note and add it (bass_012_E1.wav). Slow-ish
           (~35 ms per slice per track), hence the progress callback.
+    out_dir: write plain files into this folder instead of a zip (returns the folder).
     """
     if not slices:
         raise ValueError("no slices to export")
@@ -161,11 +186,11 @@ def export_slices(
         raise ValueError("no tracks selected")
     ordered = sorted(slices, key=lambda s: s["start"])
     stamp = time.strftime("%Y%m%d-%H%M%S")
-    zip_path = project_dir / "exports" / f"slices-{stamp}-{new_id()[:4]}.zip"
+    zip_path = out_dir or project_dir / "exports" / f"slices-{stamp}-{new_id()[:4]}.zip"
     zip_path.parent.mkdir(parents=True, exist_ok=True)
     width = max(3, len(str(len(ordered))))
     total, done = len(tracks) * len(ordered), 0
-    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+    with _sink(out_dir, zip_path) as zf:
         for t_i, track in enumerate(tracks, 1):
             src = project_dir / track["file"]
             y_full, sr = audio.read(src)

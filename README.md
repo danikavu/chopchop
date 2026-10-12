@@ -1,6 +1,6 @@
-# Chopper
+# ChopChop
 
-A local app for chopping music. Load a track, and Chopper splits it into stems with UVR
+A local app for chopping music. Load a track, and ChopChop splits it into stems with UVR
 models. From there you can:
 
 - **Slice by peaks.** Detect hits on any stem and export the same slices from every stem, or
@@ -21,7 +21,7 @@ recommend:
 [UVR](https://github.com/Anjok07/ultimatevocalremovergui) (the app these models come
 from), [Demucs](https://github.com/facebookresearch/demucs) and
 [audio-separator](https://github.com/nomadkaraoke/python-audio-separator), the library
-Chopper uses.
+ChopChop uses.
 
 |  | Minimum | Recommended |
 |---|---|---|
@@ -37,9 +37,9 @@ Chopper uses.
   song), and the Roformer models are slower still. The GPU is several times faster.
 - **Intel Macs:** stem separation isn't supported, because audio-separator needs
   PyTorch 2.3+ and PyTorch no longer publishes Intel-Mac builds. Import stems made
-  elsewhere with **Import stems…**; the rest of Chopper works.
+  elsewhere with **Import stems…**; the rest of ChopChop works.
 - **Python 3.14.1** isn't supported by audio-separator.
-- **Getting the most out of an NVIDIA GPU:** Chopper uses the separation library's defaults
+- **Getting the most out of an NVIDIA GPU:** ChopChop uses the separation library's defaults
   (one chunk at a time, full precision), which are safe on every card. Larger batches
   and half precision (fp16) can speed up the Roformer, MDX23C and MDX-Net models on some
   cards and slow them down on others. On Windows, a batch too big for the card doesn't
@@ -53,14 +53,14 @@ Chopper uses.
   - It times each model on a 30-second clip with each setting: batch 1 or a size based
     on free VRAM, fp16 on or off.
   - It prints the times, and saves a setting only if it was clearly faster (≥ 7%)
-    without falling back to CPU. Chopper then uses it for those models.
+    without falling back to CPU. ChopChop then uses it for those models.
   - `--no-save` only reports.
-  - Overrides, set before starting Chopper: `CHOPPER_GPU_BATCH=N` and `CHOPPER_FP16=0|1`.
+  - Overrides, set before starting ChopChop: `CHOPPER_GPU_BATCH=N` and `CHOPPER_FP16=0|1`.
   - **Demucs isn't tunable.** It processes one ~7.8 s segment at a time, has no batch
     setting, and doesn't use fp16, so it uses about 2 GB of VRAM whatever the card. That's
     expected, not a sign the GPU is idle.
   - **Every separation is logged** to `perf.log` in the data folder: model, device,
-    settings, seconds, and whether it fell back to CPU. If a GPU run fails, Chopper finishes
+    settings, seconds, and whether it fell back to CPU. If a GPU run fails, ChopChop finishes
     on the CPU and says so in the progress ("GPU failed (…), finishing on CPU"), so a
     silent CPU run can't pass for "the GPU got slow".
   - To see real GPU load on Windows, use Task Manager → Performance → GPU, and switch one of
@@ -189,8 +189,9 @@ lighter engine without PyTorch. You can then import stems you already have (e.g.
      - **Shift grid ◀ ▶** moves the grid 10 ms per click (1 ms with Shift).
      - **Bar starts at beat ◀ n ▶** moves only which beat counts as 1.
      - All of these are undoable.
-   - **Export** writes a zip with one folder per selected track. It runs in the background
-     with a progress bar.
+   - **Export** writes one folder per selected track. It runs in the background with a
+     progress bar.
+   - **Export to** sets where exports go (see [Export folder](#export-folder)).
 3. **Kits & bits** tab: **Build drum kit** on the drum stem (optionally loading it onto the
    pads), or **Extract sound bits**
    (chops or phrases) from any stem. Running it again on the same track replaces the samples
@@ -211,6 +212,23 @@ lighter engine without PyTorch. You can then import stems you already have (e.g.
 5. The **sample browser** groups samples by category. You can play, rename, recategorize and
    set the key of each sample, trim it (✂), or re-detect its key (♪). **Export kit** zips the
    samples currently shown as `kit/<category>/<name>_<key>.wav`.
+
+### Export folder
+
+Choose an export folder once (**Export to → Change…** in the Slices panel, or the batch
+page's output folder) and it is remembered across restarts, in `data/settings.json`. The
+same folder is used for every export:
+
+| Export | Goes to |
+| --- | --- |
+| Slices | `<export folder>/<project>/Slices – <date time>/<track>/…` |
+| Export kit (sample browser) | `<export folder>/<project>/Kit – <date time>/…` |
+| Export pads | `<export folder>/<project>/Pads – <date time>/…` |
+| Batch runs | `<export folder>/<input folder> – <date time>/<song>/…` |
+
+Every export gets a new folder, so nothing is overwritten. The result line has a
+**Show folder** button. **Reset** clears the setting: project exports then download as a
+zip again, and batches go to `data/batches/`.
 
 ### Batch: a whole folder at once
 
@@ -233,8 +251,10 @@ for example an album → a drum kit per song.
    stem) → **Analyse** (tempo, song key) → **Drum kit** (source, size, uniqueness) →
    **Sound bits** (stems, chops/phrases, how many) → **Export** (which stems, original
    mix, kit, sound bits, BPM/key in names, normalize). You can also choose whether to
-   keep each song as a Chopper project to fine-tune later.
-3. **Output folder:** optional; the default is Chopper's data folder. Each run makes
+   keep each song as a ChopChop project to fine-tune later.
+3. **Output folder:** optional. It starts at the saved [export folder](#export-folder), and
+   a folder you pick here becomes the new export folder. With none set, ChopChop's data
+   folder is used. Each run makes
    `<output>/<folder> – <date>/<song>/{stems,kit,samples}/` plus a `chopper-batch.json`
    summary.
 
@@ -242,10 +262,22 @@ Songs run one after another, with per-song progress. A file that fails is report
 the batch moves on to the next one. **Cancel** stops between steps, and **open** /
 **folder** jump to a song's project or its files.
 
+Earlier runs are read back from their `chopper-batch.json`, so they stay listed after a
+restart. Runs are found in:
+
+- the export folder;
+- `data/batches/`;
+- the output folder;
+- the input folder you load (e.g. a folder of old exports).
+
+The CLI's runs are included too. **Remove** / **Clear all** only hide runs from the list
+(remembered in `data/settings.json`). Their files stay on disk.
+
 ### Command line
 
 Batches also run from a terminal, with no browser or server needed. Inside the venv the
-command is `chopper`; anywhere, `python scripts/run.py batch …` does the same.
+command is `chopchop` (or `chopper`, its original name); anywhere, `python scripts/run.py batch …`
+does the same.
 
 ```sh
 chopper workflows                                        # list presets + saved workflows

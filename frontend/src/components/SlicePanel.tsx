@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { api } from '../api'
 import type { ExportResult, Job, Slice, Tempo, Track } from '../types'
 import { GRID_STEPS, label, snapTo, useJob } from '../util'
+import { ExportFolder, ExportResultLine } from './ExportFolder'
 import { JobProgress } from './JobProgress'
 import { Slider } from './Slider'
 
@@ -28,6 +29,8 @@ interface Props {
   onNudgeGrid: (seconds: number) => void
   dragGrid: boolean
   onDragGrid: (v: boolean) => void
+  showGrid: boolean
+  onShowGrid: (v: boolean) => void
 }
 
 const newId = () => Math.random().toString(16).slice(2, 12).padEnd(10, '0')
@@ -202,6 +205,10 @@ export function SlicePanel(p: Props) {
                 </span>
               </div>
               <label className="check">
+                <input type="checkbox" checked={p.showGrid} onChange={(e) => p.onShowGrid(e.target.checked)} />
+                Show grid lines on the waveforms
+              </label>
+              <label className="check">
                 <input type="checkbox" checked={p.dragGrid} onChange={(e) => p.onDragGrid(e.target.checked)} />
                 Drag grid (grab a red bar line on the waveforms)
               </label>
@@ -243,6 +250,7 @@ export function SlicePanel(p: Props) {
             onChange={(e) => setBpmNames(e.target.checked)} />
           BPM in loop names
         </label>
+        <ExportFolder />
         <div className="row">
           <button className="primary" onClick={() => doExport(false)}
             disabled={busy !== null || !p.slices.length || !p.exportTracks.length}>
@@ -253,12 +261,7 @@ export function SlicePanel(p: Props) {
           </button>
         </div>
         {busy === 'export' && <JobProgress job={job} fallback="Exporting…" />}
-        {result && (
-          <div className="result">
-            {result.count} files → <a href={result.url}>download zip</a>
-            <div className="path" title={result.path}>{result.path}</div>
-          </div>
-        )}
+        {result && <ExportResultLine result={result} noun="files" />}
       </section>
       {error && <div className="error">{error}</div>}
     </div>

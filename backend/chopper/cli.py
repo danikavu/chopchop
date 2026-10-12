@@ -441,7 +441,7 @@ def cmd_benchmark(args) -> int:
         print("(not saved: --no-save)")
     else:
         separation.save_gpu_settings(best)
-        print(f"Saved to {data_dir() / 'settings.json'}; Chopper uses these from now on (restart the app).")
+        print(f"Saved to {data_dir() / 'settings.json'}; ChopChop uses these from now on (restart the app).")
     return EXIT_OK
 
 
@@ -459,7 +459,8 @@ def _bool_flag(p, name: str, dest: str, help_on: str, help_off: str) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="chopper", description="Chopper: slice tracks, build drum kits and stems.",
+    name = Path(sys.argv[0]).stem if sys.argv and Path(sys.argv[0]).stem in ("chopper", "chopchop") else "chopchop"
+    p = argparse.ArgumentParser(prog=name, description="ChopChop: slice tracks, build drum kits and stems.",
                                 formatter_class=argparse.RawDescriptionHelpFormatter,
                                 epilog='Examples:\n'
                                        '  chopper                                    start the app\n'
@@ -509,9 +510,9 @@ def build_parser() -> argparse.ArgumentParser:
     o.add_argument("--no-bpm-names", action="store_true")
     o.add_argument("--no-key-names", action="store_true")
     o.add_argument("--normalize", action="store_true")
-    _bool_flag(o, "keep-projects", "keep_projects", "keep each song as a Chopper project",
+    _bool_flag(o, "keep-projects", "keep_projects", "keep each song as a ChopChop project",
                "delete each song's project after export")
-    o.add_argument("--data", metavar="DIR", help="Chopper data folder (default: CHOPPER_DATA or ./data)")
+    o.add_argument("--data", metavar="DIR", help="ChopChop data folder (default: CHOPPER_DATA or ./data)")
     r = b.add_argument_group("run")
     r.add_argument("-n", "--dry-run", action="store_true", help="show the plan and tracks, process nothing")
     r.add_argument("--json", action="store_true", help="print the result as JSON on stdout (progress on stderr)")
@@ -527,7 +528,7 @@ def build_parser() -> argparse.ArgumentParser:
     bm.add_argument("--models", default="demucs,drumsep,vocals,mdx",
                     help="which to test: demucs, drumsep, vocals, mdx (default: all)")
     bm.add_argument("--no-save", action="store_true", help="just print, don't save settings")
-    bm.add_argument("--data", metavar="DIR", help="Chopper data folder")
+    bm.add_argument("--data", metavar="DIR", help="ChopChop data folder")
     bm.add_argument("-v", "--verbose", action="store_true")
 
     ws = sub.add_parser("workflows", help="list presets and saved workflows")

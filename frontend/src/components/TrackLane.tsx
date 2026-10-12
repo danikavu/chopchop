@@ -8,6 +8,9 @@ import { label, withAlpha } from '../util'
 
 type Regions = ReturnType<typeof RegionsPlugin.create>
 
+/** Slice colours, cycled in order. No red: that's the beat grid's colour. */
+const SLICE_COLORS = ['#f59e0b', '#22d3ee', '#a78bfa', '#34d399', '#f472b6', '#60a5fa']
+
 export interface LaneEvents {
   onFocus: (name: string) => void
   onTime: (name: string, t: number) => void
@@ -141,18 +144,25 @@ export function TrackLane(props: Props) {
     if (!ready || !regions) return
     syncing.current = true
     regions.clearRegions()
-    for (const s of slices) {
+    slices.forEach((s, i) => {
       const sel = s.id === selectedId
-      regions.addRegion({
+      // Neighbouring slices get different hues (the same slice has the same hue on every
+      // lane), so you can see where one chop ends and the next begins.
+      const hue = SLICE_COLORS[i % SLICE_COLORS.length]
+      const r = regions.addRegion({
         id: s.id,
         start: s.start,
         end: s.end,
-        color: sel ? withAlpha(color, 0.38) : withAlpha(color, focused ? 0.14 : 0.08),
+        color: withAlpha(hue, sel ? 0.42 : focused ? 0.17 : 0.11),
         drag: true,
         resize: true,
         minLength: 0.005,
       })
-    }
+      if (r.element) {
+        r.element.style.borderLeft = `1px solid ${withAlpha(hue, sel ? 1 : 0.75)}`
+        r.element.style.boxShadow = sel ? `inset 0 0 0 1px ${withAlpha(hue, 0.9)}` : ''
+      }
+    })
     syncing.current = false
   }, [slices, selectedId, ready, color, focused])
 

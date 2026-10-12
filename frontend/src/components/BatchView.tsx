@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api } from '../api'
 import type { BatchJob, FolderListing, Meta, Workflow } from '../types'
+import { Logo } from './Brand'
+import { useExportDir } from './ExportFolder'
 import { FolderPicker } from './FolderPicker'
 import { JobProgress } from './JobProgress'
 import { WorkflowEditor } from './WorkflowEditor'
@@ -24,6 +26,12 @@ export function BatchView({ meta, onOpenProject }: Props) {
   const [excluded, setExcluded] = useState<string[]>([])
   const [recursive, setRecursive] = useState(false)
   const [output, setOutput] = useState('')
+  // The saved export folder (shared with project exports) is the starting point.
+  const [exportDir, saveExportDir] = useExportDir()
+  const [touched, setTouched] = useState(false)
+  useEffect(() => {
+    if (!touched && exportDir !== undefined) setOutput(exportDir ?? '')
+  }, [exportDir, touched])
   const [picker, setPicker] = useState<'input' | 'output' | null>(null)
   const [batches, setBatches] = useState<BatchJob[]>([])
   const [error, setError] = useState<string | null>(null)
@@ -33,13 +41,18 @@ export function BatchView({ meta, onOpenProject }: Props) {
     api.workflows().then((r) => {
       setPresets(r.presets)
       setSaved(r.saved)
-      setDefaultOut(r.default_output)
+      api.settings().then((s) => setDefaultOut(s.default_batch_output)).catch(() => setDefaultOut(r.default_output))
       setWf(clone(r.presets[0]))
       setBase(r.presets[0].name)
     }).catch((e) => setError(e.message))
   }, [])
 
-  const refresh = useCallback(() => api.batches().then(setBatches).catch(() => undefined), [])
+  // Earlier runs are also read from disk: in the input folder (e.g. a past run's folder)
+  // and the output folder, as well as the saved export / default batch folders.
+  const scan = [listing?.path ?? '', (output || defaultOut).trim()]
+  const scanKey = scan.join('\n')
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const refresh = useCallback(() => api.batches(scan).then(setBatches).catch(() => undefined), [scanKey])
   useEffect(() => {
     void refresh()
     const running = batches.some((b) => b.status === 'running' || b.status === 'pending')
@@ -72,6 +85,7 @@ export function BatchView({ meta, onOpenProject }: Props) {
     setError(null)
     try {
       const files = listing && !recursive ? listing.files.filter((f) => !excluded.includes(f)) : undefined
+      if (output.trim() && output.trim() !== exportDir) await saveExportDir(output.trim())
       await api.startBatch({ input_dir: input, files, recursive, output_dir: output || undefined, workflow: wf })
       void refresh()
     } catch (e) {
@@ -92,6 +106,34 @@ export function BatchView({ meta, onOpenProject }: Props) {
     }
   }
 
+  // Running batches and the latest run stay in view; older runs sit behind a dropdown.
+  const isRunning = (b: BatchJob) => b.status === 'running' || b.status === 'pending'
+  const latest = batches[0]
+  const current = batches.filter((b) => isRunning(b) || b === latest)
+  const previous = batches.filter((b) => !current.includes(b))
+  const finished = batches.filter((b) => !isRunning(b))
+  const [showPrevious, setShowPrevious] = useState(false)
+
+  const remove = async (b: BatchJob) => {
+    const where = b.detail?.output ? `\n\nIts files stay in:\n${b.detail.output}` : ''
+    if (!window.confirm(`Remove this run (“${b.detail?.workflow}”) from the list?${where}`)) return
+    try {
+      await api.removeBatch(b.id, scan)
+      void refresh()
+    } catch (e) {
+      setError((e as Error).message)
+    }
+  }
+  const clearAll = async () => {
+    if (!window.confirm(`Remove all ${finished.length} finished runs from the list? Their files stay on disk.`)) return
+    try {
+      await api.clearBatches(scan)
+      void refresh()
+    } catch (e) {
+      setError((e as Error).message)
+    }
+  }
+
   const count = listing ? listing.files.length - excluded.length : 0
   const isSaved = saved.some((w) => w.name === base)
 
@@ -101,6 +143,8 @@ export function BatchView({ meta, onOpenProject }: Props) {
         <button className="link" onClick={() => (location.hash = '')}>← Projects</button>
         <h1 className="title">Batch</h1>
         <span className="muted">Run a workflow over a whole folder (e.g. an album → a drum kit per song)</span>
+        <div className="spacer" />
+        <Logo />
       </header>
 
       <div className="batch-body">
@@ -118,6 +162,21 @@ export function BatchView({ meta, onOpenProject }: Props) {
             {listing && (
               <div className="song-list">
                 {listing.files.length === 0 && <div className="muted">No audio files in this folder.</div>}
+                {listing.files.length > 1 && (
+                  <label className="check song-list-all">
+                    <input type="checkbox" checked={excluded.length === 0}
+                      ref={(el) => {
+                        if (el) el.indeterminate = excluded.length > 0 && count > 0
+                      }}
+                      onChange={() => setExcluded(excluded.length === 0 ? [...listing.files] : [])} />
+                    {count === listing.files.length ? 'All tracks' : `${count} of ${listing.files.length} tracks`}
+                    <span className="spacer" />
+                    {count > 0 && <button className="link" onClick={(e) => {
+                      e.preventDefault()
+                      setExcluded([...listing.files])
+                    }}>Deselect all</button>}
+                  </label>
+                )}
                 {listing.files.map((f) => (
                   <label key={f} className="check">
                     <input type="checkbox" checked={!excluded.includes(f)}
@@ -163,13 +222,18 @@ export function BatchView({ meta, onOpenProject }: Props) {
           <section className="card">
             <h2>3 · Output folder</h2>
             <div className="row">
-              <input className="grow path-input" placeholder={defaultOut} value={output} onChange={(e) => setOutput(e.target.value)} />
+              <input className="grow path-input" placeholder={defaultOut} value={output}
+                onChange={(e) => {
+                  setTouched(true)
+                  setOutput(e.target.value)
+                }} />
               <button onClick={() => setPicker('output')}>Browse…</button>
             </div>
             <p className="tip">
               Each run gets its own folder inside, one subfolder per song (<code>stems/</code>, <code>kit/</code>,{' '}
               <code>samples/</code>) and a <code>chopper-batch.json</code> summary.
-              {!output && ' Empty = Chopper’s data folder.'}
+              {' '}The folder is remembered and also used for slice / kit exports from a project.
+              {!output && ' Empty = ChopChop’s data folder.'}
             </p>
           </section>
 
@@ -183,9 +247,25 @@ export function BatchView({ meta, onOpenProject }: Props) {
         </div>
 
         <div className="batch-runs">
-          <h2>Runs</h2>
+          <div className="row runs-head">
+            <h2>Runs</h2>
+            <div className="spacer" />
+            {finished.length > 0 && (
+              <button onClick={clearAll} title="Remove every finished run from this list (their files stay on disk)">
+                Clear all
+              </button>
+            )}
+          </div>
           {batches.length === 0 && <div className="empty">No batches yet.</div>}
-          {batches.map((b) => <BatchCard key={b.id} b={b} onOpenProject={onOpenProject} />)}
+          {current.map((b) => <BatchCard key={b.id} b={b} onOpenProject={onOpenProject} onRemove={remove} />)}
+          {previous.length > 0 && (
+            <>
+              <button className={`runs-toggle ${showPrevious ? 'open' : ''}`} onClick={() => setShowPrevious((v) => !v)}>
+                {showPrevious ? '▾' : '▸'} Previous runs ({previous.length})
+              </button>
+              {showPrevious && previous.map((b) => <BatchCard key={b.id} b={b} onOpenProject={onOpenProject} onRemove={remove} />)}
+            </>
+          )}
         </div>
       </div>
 
@@ -196,7 +276,11 @@ export function BatchView({ meta, onOpenProject }: Props) {
           onClose={() => setPicker(null)}
           onPick={(path) => {
             if (picker === 'input') void loadFolder(path)
-            else setOutput(path)
+            else {
+              setTouched(true)
+              setOutput(path)
+              void saveExportDir(path).catch((e) => setError(e.message))
+            }
             setPicker(null)
           }}
         />
@@ -205,7 +289,11 @@ export function BatchView({ meta, onOpenProject }: Props) {
   )
 }
 
-function BatchCard({ b, onOpenProject }: { b: BatchJob; onOpenProject: (pid: string) => void }) {
+function BatchCard({ b, onOpenProject, onRemove }: {
+  b: BatchJob
+  onOpenProject: (pid: string) => void
+  onRemove: (b: BatchJob) => void
+}) {
   const running = b.status === 'running' || b.status === 'pending'
   const songs = b.detail?.songs ?? []
   return (
@@ -213,9 +301,17 @@ function BatchCard({ b, onOpenProject }: { b: BatchJob; onOpenProject: (pid: str
       <div className="row">
         <b>{b.detail?.workflow}</b>
         <span className={`status ${b.status}`}>{b.status}</span>
+        {b.detail?.from_disk && (
+          <span className="muted small" title="Read from this run's chopper-batch.json">
+            {new Date(b.created_at * 1000).toLocaleString()}
+          </span>
+        )}
         <div className="spacer" />
         {running && <button onClick={() => api.cancelJob(b.id)}>Cancel</button>}
         {b.detail?.output && <button onClick={() => api.reveal(b.detail!.output)} title={b.detail.output}>Show folder</button>}
+        {!running && (
+          <button onClick={() => onRemove(b)} title="Remove this run from the list (its files stay on disk)">Remove</button>
+        )}
       </div>
       {running && <JobProgress job={b} />}
       {!running && b.error && <div className="error">{b.error}</div>}

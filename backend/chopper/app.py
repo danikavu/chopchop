@@ -8,16 +8,17 @@ import re
 import subprocess
 import shutil
 import tempfile
+import time
 from dataclasses import asdict
 from pathlib import Path
 from urllib.parse import quote
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import analysis, audio, kits, separation, slicing, tempo, workflows
+from . import analysis, audio, kits, separation, settings, slicing, tempo, workflows
 from .jobs import Job, JobRunner
 from .service import Chopper
 from .store import PAD_SLOTS, ProjectNotFound, Store, find_sample, find_track, new_id, safe_name
@@ -132,6 +133,10 @@ class BatchReq(BaseModel):
     workflow: workflows.Workflow
 
 
+class SettingsReq(BaseModel):
+    export_dir: str | None = None  # where exports go; empty / null = defaults
+
+
 class RevealReq(BaseModel):
     path: str
 
@@ -140,7 +145,7 @@ def create_app(store: Store | None = None) -> FastAPI:
     store = store or Store()
     svc = Chopper(store)
     jobs = JobRunner()
-    app = FastAPI(title="Chopper")
+    app = FastAPI(title="ChopChop")
 
     @app.middleware("http")
     async def undo_headers(request, call_next):
@@ -172,6 +177,24 @@ def create_app(store: Store | None = None) -> FastAPI:
             return find_sample(project, sid)
         except KeyError as e:
             raise HTTPException(404, str(e))
+
+    def export_folder(project: dict, kind: str) -> Path | None:
+        """<export folder>/<project>/<kind> – <date>/ when an export folder is set, else
+        None (export as a zip download, as before)."""
+        base = settings.export_dir()
+        if not base:
+            return None
+        stamp = time.strftime("%Y-%m-%d %H.%M")
+        return workflows.unique_dir(base / workflows.folder_name(project["name"]) / f"{kind} – {stamp}")
+
+    def export_result(pid: str, path: Path, folder: Path | None, count: int) -> dict:
+        return {
+            "file": path.name,
+            "path": str(path),
+            "url": None if folder else f"/api/projects/{pid}/exports/{path.name}",
+            "folder": folder is not None,
+            "count": count,
+        }
 
     add_track = svc.add_track
     detect_tempo = svc.detect_tempo
@@ -388,6 +411,19 @@ def create_app(store: Store | None = None) -> FastAPI:
 
     # ---------- batch workflows ----------
 
+    @app.get("/api/settings")
+    def get_settings():
+        out = settings.export_dir()
+        return {"export_dir": str(out) if out else None, "default_batch_output": str(workflows.default_output())}
+
+    @app.put("/api/settings")
+    def put_settings(body: SettingsReq):
+        try:
+            settings.set_export_dir(body.export_dir)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        return get_settings()
+
     @app.get("/api/fs")
     def list_folder(path: str | None = None):
         """Folders and audio files at a path on this computer (for the folder picker)."""
@@ -401,7 +437,7 @@ def create_app(store: Store | None = None) -> FastAPI:
         return {
             "presets": [w.model_dump() for w in workflows.PRESETS],
             "saved": workflows.saved(),
-            "default_output": str(workflows.default_output()),
+            "default_output": str(settings.export_dir() or workflows.default_output()),
         }
 
     @app.put("/api/workflows")
@@ -439,13 +475,74 @@ def create_app(store: Store | None = None) -> FastAPI:
                       "songs": [{"file": str(f), "song": f.stem, "status": "queued", "message": ""} for f in files]}
         return asdict(job)
 
+    def hidden_runs() -> set[str]:
+        return set(settings.get("hidden_runs", []))
+
+    def hide_runs(paths: list[str]) -> None:
+        # Forget folders that are gone so the list doesn't grow forever.
+        keep = {p for p in hidden_runs() | set(paths) if Path(p).exists()}
+        settings.put("hidden_runs", sorted(keep))
+
+    def project_exists(pid: str) -> bool:
+        try:
+            return (store.path(pid) / "project.json").is_file()
+        except ProjectNotFound:
+            return False
+
+    def disk_runs(scan: list[str]) -> list[dict]:
+        """Runs found on disk (chopper-batch.json) in the export / batch folders and the
+        folders the batch page is looking at, minus hidden ones and this session's own."""
+        folders = [Path(p) for p in scan if p] + [workflows.default_output()]
+        if settings.export_dir():
+            folders.append(settings.export_dir())
+        live = {str(Path(j["detail"]["output"]).resolve()) for j in jobs.of_kind("batch") if j.get("detail")}
+        hidden = hidden_runs()
+        runs = []
+        for r in workflows.find_runs(folders):
+            out = r["detail"]["output"]
+            if out in live or out in hidden:
+                continue
+            for song in r["detail"]["songs"]:  # projects deleted since then: no "open" link
+                if song.get("project") and not project_exists(song["project"]):
+                    song.pop("project", None)
+            runs.append(r)
+        return runs
+
     @app.get("/api/batches")
-    def list_batches():
-        return jobs.of_kind("batch")
+    def list_batches(scan: list[str] = Query(default=[])):
+        runs = jobs.of_kind("batch") + disk_runs(scan)
+        return sorted(runs, key=lambda r: -r["created_at"])
+
+    @app.delete("/api/batches/{jid}")
+    def remove_batch(jid: str, scan: list[str] = Query(default=[])):
+        """Remove a finished run from the list. Its output files are left alone."""
+        if jid.startswith("disk:"):
+            run = next((r for r in disk_runs(scan) if r["id"] == jid), None)
+            if not run:
+                raise HTTPException(404, "batch not found")
+            hide_runs([run["detail"]["output"]])
+            return {"ok": True}
+        job = jobs.get(jid)
+        if not job or not job.kind.startswith("batch"):
+            raise HTTPException(404, "batch not found")
+        if not jobs.remove(jid):
+            raise HTTPException(409, "the batch is still running; cancel it first")
+        if job.detail and job.detail.get("output"):
+            hide_runs([str(Path(job.detail["output"]).resolve())])  # so it doesn't come back from disk
+        return {"ok": True}
+
+    @app.delete("/api/batches")
+    def clear_batches(scan: list[str] = Query(default=[])):
+        """Remove every finished run from the list (running ones stay; files stay)."""
+        finished = [j for j in jobs.of_kind("batch") if j["status"] not in ("pending", "running")]
+        on_disk = disk_runs(scan)
+        hide_runs([str(Path(j["detail"]["output"]).resolve()) for j in finished if j.get("detail")]
+                  + [r["detail"]["output"] for r in on_disk])
+        return {"removed": jobs.clear("batch") + len(on_disk)}
 
     @app.post("/api/reveal")
     def reveal(req: RevealReq):
-        """Open a folder in Finder / Explorer / the file manager (Chopper runs locally)."""
+        """Open a folder in Finder / Explorer / the file manager (ChopChop runs locally)."""
         target = Path(req.path).expanduser()
         if not target.exists():
             raise HTTPException(404, "folder not found")
@@ -499,14 +596,11 @@ def create_app(store: Store | None = None) -> FastAPI:
         bpm = (p.get("tempo") or {}).get("bpm") if req.bpm_names else None
 
         def work(job: Job):
+            out = export_folder(p, "Slices")
             path = slicing.export_slices(store.path(pid), tracks, slices, req.fade_in_ms, req.fade_out_ms,
-                                         req.normalize, bpm=bpm, keys=req.key_names, progress=job.update)
-            return {
-                "file": path.name,
-                "path": str(path),
-                "url": f"/api/projects/{pid}/exports/{path.name}",
-                "count": len(slices) * len(tracks),
-            }
+                                         req.normalize, bpm=bpm, keys=req.key_names, progress=job.update,
+                                         out_dir=out)
+            return export_result(pid, path, out, len(slices) * len(tracks))
 
         return asdict(jobs.submit("export:slices", pid, work))
 
@@ -649,17 +743,16 @@ def create_app(store: Store | None = None) -> FastAPI:
         elif req.sample_ids is not None:
             wanted = set(req.sample_ids)
             samples = [s for s in samples if s["id"] in wanted]
-        try:
-            bpm = (p.get("tempo") or {}).get("bpm")
+        if not samples:
+            raise HTTPException(400, "no samples to export")
+        bpm = (p.get("tempo") or {}).get("bpm")
+        out = export_folder(p, "Pads" if req.from_pads else "Kit")
+        if out:
+            kits.write_kit(store.path(pid), samples, out, req.normalize, labels, bpm)
+            path = out
+        else:
             path = kits.export_kit(store.path(pid), p, samples, req.kit_name or p["name"], req.normalize, labels, bpm)
-        except ValueError as e:
-            raise HTTPException(400, str(e))
-        return {
-            "file": path.name,
-            "path": str(path),
-            "url": f"/api/projects/{pid}/exports/{path.name}",
-            "count": len(samples),
-        }
+        return export_result(pid, path, out, len(samples))
 
     # ---------- frontend ----------
 

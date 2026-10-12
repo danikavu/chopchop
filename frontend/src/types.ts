@@ -72,11 +72,12 @@ export interface Job {
   id: string
   kind: string
   project_id: string
-  status: 'pending' | 'running' | 'done' | 'error'
+  status: 'pending' | 'running' | 'done' | 'error' | 'cancelled'
   progress: number
   message: string
   result: unknown
   error: string | null
+  created_at: number
   started_at: number | null
   finished_at: number | null
 }
@@ -105,8 +106,14 @@ export interface Meta {
 export interface ExportResult {
   file: string
   path: string
-  url: string
+  url: string | null  // null when written into the export folder
+  folder?: boolean
   count: number
+}
+
+export interface Settings {
+  export_dir: string | null
+  default_batch_output: string
 }
 
 export interface Workflow {
@@ -146,7 +153,7 @@ export interface BatchSong {
 }
 
 export interface BatchJob extends Job {
-  detail: { output: string; workflow: string; songs: BatchSong[] } | null
+  detail: { output: string; workflow: string; songs: BatchSong[]; from_disk?: boolean } | null
 }
 
 export interface FolderListing {

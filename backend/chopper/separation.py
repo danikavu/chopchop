@@ -135,7 +135,7 @@ Progress = Callable[[float, str], None]
 log = logging.getLogger(__name__)
 
 # Terminal use (the CLI): keep audio-separator's INFO logs and its console progress bars
-# out of the output; Chopper reports progress itself.
+# out of the output; ChopChop reports progress itself.
 QUIET = False
 LAST_RUN: dict = {}  # what the most recent model run used and how long it took (benchmark)
 
@@ -313,26 +313,18 @@ def arch_of(model: str) -> str:
     return "demucs" if model.endswith(".yaml") else "mdx" if model.endswith(".onnx") else "mdxc"
 
 
-def _settings_path() -> Path:
-    return data_dir() / "settings.json"
-
-
 def gpu_settings() -> dict:
     """Saved per-architecture GPU settings ({"mdx": {"batch": 1, "fp16": false}, …}),
     written by `chopper benchmark` from measurements on this machine."""
-    try:
-        return json.loads(_settings_path().read_text()).get("gpu", {})
-    except (OSError, json.JSONDecodeError):
-        return {}
+    from . import settings
+
+    return settings.get("gpu", {})
 
 
 def save_gpu_settings(gpu: dict) -> None:
-    try:
-        current = json.loads(_settings_path().read_text())
-    except (OSError, json.JSONDecodeError):
-        current = {}
-    current["gpu"] = gpu
-    _settings_path().write_text(json.dumps(current, indent=1))
+    from . import settings
+
+    settings.put("gpu", gpu)
 
 
 def auto_batch(arch: str) -> int:
