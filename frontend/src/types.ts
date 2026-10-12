@@ -11,6 +11,14 @@ export interface Slice {
   id: string
   start: number
   end: number
+  /** Chop only this track; unset = every track (lined up). */
+  track?: string
+}
+
+/** A part of the track to separate (seconds). */
+export interface Part {
+  start: number
+  end: number
 }
 
 export interface Sample {
@@ -109,6 +117,9 @@ export interface ExportResult {
   url: string | null  // null when written into the export folder
   folder?: boolean
   count: number
+  transposed?: number  // extra copies in C (see ToC)
+  silent?: number  // slices left out because they were silent on a track
+
 }
 
 export interface Settings {
@@ -133,6 +144,7 @@ export interface Workflow {
     bpm_names: boolean
     key_names: boolean
     normalize: boolean
+    to_c?: ToC
   }
   keep_projects: boolean
 }
@@ -162,3 +174,6 @@ export interface FolderListing {
   dirs: string[]
   files: string[]
 }
+
+/** Also export keyed samples transposed to C: resampled (repitched), length kept (warped), or both. */
+export type ToC = 'none' | 'repitched' | 'warped' | 'both'

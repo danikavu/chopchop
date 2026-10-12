@@ -5,6 +5,7 @@ import type { ExportResult, Job, Sample, Track } from '../types'
 import { categoryColor, isDrumPart, isDrumTrack, isTextEntry, label, NOT_DRUMS_NOTE, useJob } from '../util'
 import { ExportResultLine } from './ExportFolder'
 import { JobProgress } from './JobProgress'
+import { ToCSelect, useToC } from './ToCSelect'
 
 export const PADS_PER_BANK = 16
 const BANKS = ['A', 'B', 'C', 'D']
@@ -48,6 +49,8 @@ export function DrumPads(p: Props) {
   const padEls = useRef(new Map<number, HTMLButtonElement>())
 
   const byId = useMemo(() => new Map(p.samples.map((s) => [s.id, s])), [p.samples])
+  const onPads = useMemo(() => [...new Set(p.pads)].flatMap((x) => (x && byId.get(x)) || []), [p.pads, byId])
+  const [toC] = useToC()
   const padSample = (i: number) => (p.pads[i] ? byId.get(p.pads[i]!) : undefined)
 
   // Follow the drum stem once it appears (after separation / import), unless the
@@ -150,7 +153,7 @@ export function DrumPads(p: Props) {
   const exportPads = async () => {
     setError(null)
     try {
-      setResult(await api.exportKit(p.pid, { kit_name: `${p.projectName} pads`, normalize: false, from_pads: true }))
+      setResult(await api.exportKit(p.pid, { kit_name: `${p.projectName} pads`, normalize: false, from_pads: true, to_c: toC }))
     } catch (e) {
       setError((e as Error).message)
     }
@@ -172,6 +175,7 @@ export function DrumPads(p: Props) {
           ))}
         </div>
         <div className="spacer" />
+        <ToCSelect samples={onPads} />
         <button onClick={exportPads} disabled={!p.pads.some(Boolean)}>Export pads</button>
         <button
           onClick={() => {

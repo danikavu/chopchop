@@ -21,7 +21,7 @@ from typing import Callable, Literal
 
 from pydantic import BaseModel, Field
 
-from . import analysis, audio, kits, separation
+from . import analysis, audio, kits, separation, transpose
 from .naming import export_name
 from .service import Chopper
 from .store import data_dir
@@ -67,6 +67,9 @@ class ExportStep(BaseModel):
     bpm_names: bool = True
     key_names: bool = True
     normalize: bool = False
+    # Kit / sound bits also transposed to C (keyed samples not already in C), each way in
+    # its own "In C (…)" folder: see transpose.py.
+    to_c: Literal["none", "repitched", "warped", "both"] = "none"
 
 
 class Workflow(BaseModel):
@@ -372,6 +375,7 @@ def _export(svc: Chopper, pid: str, wf: Workflow, kept: list[str], out_dir: Path
     progress(0.4, "stems written")
 
     samples = p["samples"]
+    to_c = transpose.modes(e.to_c)
     if e.kit:
         by_id = {s["id"]: s for s in samples}
         on_pads = [(i, by_id[x]) for i, x in enumerate(p["pads"]) if x in by_id]
@@ -379,11 +383,11 @@ def _export(svc: Chopper, pid: str, wf: Workflow, kept: list[str], out_dir: Path
         for i, s in on_pads:
             labels.setdefault(s["id"], kits.pad_label(i))
         kit = list({s["id"]: s for _, s in on_pads}.values())
-        written += len(kits.write_kit(folder, kit, out_dir / "kit", e.normalize, labels, bpm))
+        written += len(kits.write_kit(folder, kit, out_dir / "kit", e.normalize, labels, bpm, to_c))
     progress(0.7, "kit written")
     if e.samples:
         bits = [s for s in samples if s.get("origin") in ("chops", "phrases", "manual")]
-        written += len(kits.write_kit(folder, bits, out_dir / "samples", e.normalize, None, bpm))
+        written += len(kits.write_kit(folder, bits, out_dir / "samples", e.normalize, None, bpm, to_c))
     return written
 
 

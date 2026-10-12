@@ -4,12 +4,14 @@ import type {
   FolderListing,
   Job,
   Meta,
+  Part,
   Project,
   ProjectSummary,
   Sample,
   Settings,
   Slice,
   Tempo,
+  ToC,
   Track,
   Workflow,
 } from './types'
@@ -93,7 +95,7 @@ export const api = {
   trackPeaks: (pid: string, name: string, n = 8000) =>
     req<{ duration: number; peaks: number[] }>('GET', `${P(pid)}/tracks/${enc(name)}/peaks?n=${n}`),
 
-  separate: (pid: string, body: { model: string; stems: string[] | null; rest: boolean; replace: boolean; debleed: boolean }) =>
+  separate: (pid: string, body: { model: string; stems: string[] | null; rest: boolean; replace: boolean; debleed: boolean; parts?: Part[] }) =>
     req<Job>('POST', `${P(pid)}/separate`, body),
   runTool: (pid: string, track: string, tool: string) =>
     req<Job>('POST', `${P(pid)}/tracks/${enc(track)}/tool`, { tool }),
@@ -117,7 +119,7 @@ export const api = {
 
   detectSlices: (
     pid: string,
-    body: { track: string; sensitivity: number; min_gap: number; max_len: number | null; gate_db: number },
+    body: { track: string; sensitivity: number; min_gap: number; max_len: number | null; gate_db: number; only_track?: boolean },
   ) => req<{ slices: Slice[] }>('POST', `${P(pid)}/slices/detect`, body),
   saveSlices: (pid: string, slices: Slice[], label?: string) =>
     req<{ slices: Slice[] }>('PUT', `${P(pid)}/slices`, { slices, label }),
@@ -131,6 +133,7 @@ export const api = {
       normalize: boolean
       key_names: boolean
       bpm_names: boolean
+      skip_silent: boolean
     },
   ) => req<Job>('POST', `${P(pid)}/slices/export`, body),
 
@@ -167,6 +170,6 @@ export const api = {
   history: (pid: string) => req<UndoState>('GET', `${P(pid)}/history`),
   undo: (pid: string) => req<{ undone: string; project: Project }>('POST', `${P(pid)}/undo`),
   redo: (pid: string) => req<{ redone: string; project: Project }>('POST', `${P(pid)}/redo`),
-  exportKit: (pid: string, body: { sample_ids?: string[]; kit_name: string; normalize: boolean; from_pads?: boolean }) =>
+  exportKit: (pid: string, body: { sample_ids?: string[]; kit_name: string; normalize: boolean; from_pads?: boolean; to_c?: ToC }) =>
     req<ExportResult>('POST', `${P(pid)}/samples/export`, body),
 }

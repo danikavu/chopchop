@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
-import type { Meta } from '../types'
-import { label } from '../util'
+import type { Meta, Part, Slice } from '../types'
+import { fmtTime, label } from '../util'
 
 export interface SeparateOptions {
   model: string
@@ -8,6 +8,7 @@ export interface SeparateOptions {
   rest: boolean
   replace: boolean
   debleed: boolean
+  parts?: Part[]
 }
 
 interface Props {
@@ -15,6 +16,13 @@ interface Props {
   hasStems: boolean
   onStart: (opts: SeparateOptions) => void
   onCancel?: () => void
+  /** Separate only parts of the track: drawn on the waveform while picking. */
+  parts: Part[]
+  onParts: (parts: Part[]) => void
+  picking: boolean
+  onPicking: (v: boolean) => void
+  selected?: Slice
+  duration: number
 }
 
 /** Stems the models leave drum bleed in (mirrors separation.DEBLEED_STEMS). */
@@ -29,7 +37,7 @@ function restName(keep: string[]) {
 }
 
 /** Choose the separation model and which stems end up in the project. */
-export function StemPicker({ meta, hasStems, onStart, onCancel }: Props) {
+export function StemPicker({ meta, hasStems, onStart, onCancel, parts, onParts, picking, onPicking, selected, duration }: Props) {
   const [model, setModel] = useState(() => meta.models.find((m) => m.default)?.id ?? meta.models[0]?.id ?? '')
   const current = meta.models.find((m) => m.id === model)
   const stems = useMemo(() => current?.stems ?? [], [current])
@@ -127,15 +135,42 @@ export function StemPicker({ meta, hasStems, onStart, onCancel }: Props) {
         </div>
       )}
 
+      <label className="check" title="Separate just the parts you mark (much faster for a short section). The stems are silent elsewhere but stay in line with the mix.">
+        <input type="checkbox" checked={picking} onChange={(e) => onPicking(e.target.checked)} />
+        Only parts of the track
+      </label>
+      {picking && (
+        <div className="sep-parts">
+          <div className="muted small">
+            Drag on the waveform to mark each part{selected ? ', or add the selected slice' : ''}.
+            {parts.length > 0 && <> · {fmtTime(parts.reduce((n, r) => n + r.end - r.start, 0))} of {fmtTime(duration)}</>}
+          </div>
+          <div className="chips">
+            {parts.map((r, i) => (
+              <span key={i} className="chip on">
+                {fmtTime(r.start)} – {fmtTime(r.end)}
+                <button className="link" title="Remove this part" onClick={() => onParts(parts.filter((_, j) => j !== i))}>×</button>
+              </span>
+            ))}
+            {selected && (
+              <button className="chip" onClick={() => onParts([...parts, { start: selected.start, end: selected.end }]
+                .sort((a, b) => a.start - b.start))}>+ selected slice</button>
+            )}
+            {parts.length > 0 && <button className="link" onClick={() => onParts([])}>clear</button>}
+          </div>
+        </div>
+      )}
+
       <div className="row">
         <span className="muted">
-          {keep.length ? <>You’ll get: <b>{result.map(label).join(', ')}</b></> : 'Pick at least one stem'}
+          {keep.length ? <>You’ll get: <b>{result.map(label).join(', ')}</b>{picking && parts.length ? ` (${parts.length} part${parts.length > 1 ? 's' : ''})` : ''}</> : 'Pick at least one stem'}
         </span>
         <div className="spacer" />
         {onCancel && <button onClick={onCancel}>Cancel</button>}
-        <button className="primary" disabled={!keep.length}
-          onClick={() => onStart({ model, stems: all ? null : keep, rest, replace, debleed })}>
-          Separate stems
+        <button className="primary" disabled={!keep.length || (picking && !parts.length)}
+          title={picking && !parts.length ? 'Mark at least one part on the waveform' : undefined}
+          onClick={() => onStart({ model, stems: all ? null : keep, rest, replace, debleed, parts: picking ? parts : undefined })}>
+          {picking ? 'Separate parts' : 'Separate stems'}
         </button>
       </div>
     </div>

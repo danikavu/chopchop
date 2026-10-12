@@ -129,6 +129,8 @@ def _apply_overrides(wf, a):
         wf.export.key_names = False
     if a.normalize:
         wf.export.normalize = True
+    if a.to_c:
+        wf.export.to_c = a.to_c
     if a.keep_projects is not None:
         wf.keep_projects = a.keep_projects
     return wf
@@ -153,6 +155,8 @@ def _plan(wf) -> list[str]:
     e = wf.export
     what = [f"stems: {e.stems if isinstance(e.stems, str) else ', '.join(e.stems)}"]
     what += [x for x, on in (("mix", e.mix), ("kit", e.kit and wf.kit.enabled), ("sound bits", e.samples and wf.bits.enabled)) if on]
+    if e.to_c != "none" and ((e.kit and wf.kit.enabled) or (e.samples and wf.bits.enabled)):
+        what.append(f"keyed sounds also in C ({e.to_c})")
     lines.append("export " + ", ".join(what))
     if not wf.keep_projects:
         lines.append("delete each song's project afterwards")
@@ -510,6 +514,9 @@ def build_parser() -> argparse.ArgumentParser:
     o.add_argument("--no-bpm-names", action="store_true")
     o.add_argument("--no-key-names", action="store_true")
     o.add_argument("--normalize", action="store_true")
+    o.add_argument("--to-c", choices=["none", "repitched", "warped", "both"],
+                   help="also export keyed kit / sound bits transposed to C, in 'In C (…)' folders "
+                        "(repitched = resampled, warped = same length)")
     _bool_flag(o, "keep-projects", "keep_projects", "keep each song as a ChopChop project",
                "delete each song's project after export")
     o.add_argument("--data", metavar="DIR", help="ChopChop data folder (default: CHOPPER_DATA or ./data)")

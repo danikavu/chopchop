@@ -103,3 +103,20 @@ def test_ctrl_c_cancels_between_steps(album, monkeypatch, capsys):
     assert cli.main(["batch", str(album), "-w", "All stems", "-q"]) == cli.EXIT_CANCELLED
     out = capsys.readouterr().out
     assert "Stopping after the current step" in out and "Cancelled after 0/2 songs" in out
+
+
+def test_kit_also_transposed_to_c(album, tmp_path, capsys):
+    out = tmp_path / "out"
+    code = cli.main(["batch", str(album), "-w", "drum kit per song", "-o", str(out), "--only", "01*",
+                     "--to-c", "both"])
+    text = capsys.readouterr().out
+    assert code == cli.EXIT_OK, text
+    assert "keyed sounds also in C (both)" in text
+    kit = next(out.iterdir()) / "01 Song 1" / "kit"
+    originals = [p.name for p in kit.glob("*.wav")]
+    keyed = [n for n in originals if n.startswith("A0") and "kick" in n and not n.removesuffix(".wav").split("_")[-1].startswith("C")]
+    assert keyed, originals  # the synth kick is pitched, and not on a C
+    for folder in ("In C (repitched)", "In C (warped)"):
+        moved = sorted(p.name for p in (kit / folder).glob("*.wav"))
+        # Only pitched hits move (kicks), named with their new note; hats / snares stay put.
+        assert len(moved) == len(keyed) and all("kick" in n and "_C" in n for n in moved), moved

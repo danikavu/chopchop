@@ -1,6 +1,7 @@
-import type { Meta, Workflow } from '../types'
+import type { Meta, ToC, Workflow } from '../types'
 import { label } from '../util'
 import { canDebleed, DEBLEED } from './StemPicker'
+import { TO_C_HELP } from './ToCSelect'
 
 interface Props {
   meta: Meta
@@ -175,6 +176,16 @@ export function WorkflowEditor({ meta, wf, onChange }: Props) {
         <label className="check"><input type="checkbox" checked={wf.export.bpm_names} onChange={(e) => set('export', { bpm_names: e.target.checked })} /> BPM in names</label>
         <label className="check"><input type="checkbox" checked={wf.export.key_names} onChange={(e) => set('export', { key_names: e.target.checked })} /> Key in names</label>
         <label className="check"><input type="checkbox" checked={wf.export.normalize} onChange={(e) => set('export', { normalize: e.target.checked })} /> Normalize</label>
+        <label className="check" title={TO_C_HELP}>
+          Kit / bits also in C
+          <select value={wf.export.to_c ?? 'none'} disabled={!(wf.export.kit && wf.kit.enabled) && !(wf.export.samples && wf.bits.enabled)}
+            onChange={(e) => set('export', { to_c: e.target.value as ToC })}>
+            <option value="none">off</option>
+            <option value="repitched">repitched</option>
+            <option value="warped">warped</option>
+            <option value="both">both</option>
+          </select>
+        </label>
         <label className="check"><input type="checkbox" checked={wf.keep_projects} onChange={(e) => set('keep_projects', e.target.checked)} /> Keep each song as a ChopChop project (to tweak later)</label>
       </Section>
     </div>

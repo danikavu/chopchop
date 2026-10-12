@@ -5,6 +5,7 @@ import { categoryColor, keySuggestions, label, playPreview } from '../util'
 import { SAMPLE_MIME } from './DrumPads'
 import { ExportResultLine, useExportDir } from './ExportFolder'
 import { MiniWave } from './MiniWave'
+import { ToCSelect, useToC } from './ToCSelect'
 
 interface Props {
   pid: string
@@ -33,6 +34,7 @@ export function SampleBrowser({ pid, pads, onLoadToPad, projectName, samples, me
   const [normalize, setNormalize] = useState(false)
   const [result, setResult] = useState<ExportResult | null>(null)
   const [exportDir] = useExportDir()
+  const [toC] = useToC()
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
@@ -62,7 +64,7 @@ export function SampleBrowser({ pid, pads, onLoadToPad, projectName, samples, me
     setError(null)
     setResult(null)
     try {
-      setResult(await api.exportKit(pid, { sample_ids: shown.map((s) => s.id), kit_name: kitName, normalize }))
+      setResult(await api.exportKit(pid, { sample_ids: shown.map((s) => s.id), kit_name: kitName, normalize, to_c: toC }))
     } catch (e) {
       setError((e as Error).message)
     } finally {
@@ -108,6 +110,7 @@ export function SampleBrowser({ pid, pads, onLoadToPad, projectName, samples, me
         <label className="check">
           <input type="checkbox" checked={normalize} onChange={(e) => setNormalize(e.target.checked)} /> normalize
         </label>
+        <ToCSelect samples={shown} />
         <button className="primary" disabled={busy || !shown.length} onClick={exportKit}
           title={exportDir ? `Saves into ${exportDir}` : 'Downloads a zip (set an export folder in the Slices panel)'}>
           {busy ? 'Exporting…' : `Export kit (${shown.length})`}

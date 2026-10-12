@@ -167,6 +167,10 @@ lighter engine without PyTorch. You can then import stems you already have (e.g.
      only vocals are kept, `no_drums` when only drums are, `rest` otherwise. Or drop them.
    - **Separate…** in the top bar re-runs it later with another model or choice. It
      replaces the current stems, and one undo brings them back.
+   - **Only parts of the track:** tick it, then drag on the waveform to mark each part (or
+     add the selected slice). Only those parts are separated, in one model run, with a
+     second of context around each, so a short section takes a fraction of the time. The
+     stems are silent elsewhere but stay full length, in line with the mix.
 2. **Slice** tab: choose a track, tune sensitivity, gap and gate, then click **Detect**.
    Slices appear on every lane, so you can listen to the same chop across all stems.
    - Drag on a waveform to draw a slice; drag its edges or body to adjust it.
@@ -174,6 +178,17 @@ lighter engine without PyTorch. You can then import stems you already have (e.g.
    - <kbd>Space</kbd> play/pause · <kbd>S</kbd> split at the playhead ·
      <kbd>Del</kbd> delete · <kbd>←</kbd>/<kbd>→</kbd> step through and audition ·
      <kbd>Enter</kbd> save the selected slice as a sample.
+   - **Loop** (transport, or <kbd>L</kbd>; off by default) repeats the selected chop
+     while it plays: click it, step to it with <kbd>←</kbd>/<kbd>→</kbd>, or press
+     <kbd>Space</kbd>. Selecting another chop loops that one.
+   - **Chop one stem only:** hold <kbd>⌥/Alt</kbd> while drawing a slice or pressing
+     <kbd>S</kbd>. Or press <kbd>O</kbd> (or **Only <stem>** in the transport) to stay in that
+     mode, where **Detect**, **Chop to grid** and **clear** also work on just the focused
+     stem.
+     - Those chops have dashed edges and show only on their stem's lane.
+     - They export only from that stem, numbered on their own (`vocals_only_001.wav`), so
+       shared chops keep their lined-up numbers.
+     - Removing the stem removes its chops.
    - **Beat grid**, once the tempo is known:
      - pick a resolution from 1/16 up to 4 bars;
      - **Chop to grid** makes one slice per cell, e.g. 1-bar loops;
@@ -191,11 +206,21 @@ lighter engine without PyTorch. You can then import stems you already have (e.g.
      - All of these are undoable.
    - **Export** writes one folder per selected track. It runs in the background with a
      progress bar.
+   - **Skip silent chops** (on by default) leaves out a chop on any track where it is
+     muted or nearly so: peak more than 40 dB below that track's loudest moment. An
+     example is a vocal stem during a beat intro. Numbers stay in step, so `drums_005`
+     and `vocals_005` are still the same moment.
    - **Export to** sets where exports go (see [Export folder](#export-folder)).
-3. **Kits & bits** tab: **Build drum kit** on the drum stem (optionally loading it onto the
-   pads), or **Extract sound bits**
-   (chops or phrases) from any stem. Running it again on the same track replaces the samples
-   it made last time; samples you made by hand are kept.
+3. **Kits & bits** tab. Pick one or more tracks for each:
+   - **Build drum kit** (optionally loading it onto the pads). Several tracks make one kit
+     across them, e.g. split kick / snare / hat parts.
+   - **Extract sound bits** (chops or phrases). Each chosen stem is judged on its own, so
+     quiet vocals next to loud bass still give bits. **Extract & export** does it in one
+     click: it extracts, then exports just the new bits to the export folder (or as a
+     zip), with the **→ C** option.
+
+   The result line says how many came from each track. Running it again on the same track
+   replaces the samples it made last time; samples you made by hand are kept.
 4. **Drum pads**, 4 banks × 16 pads laid out like an MPC:
    - **Auto kit → pads** builds a kit from the drum stem and loads it onto bank A. Kicks go
      on the bottom row (A01–A04), then snares and claps (A05–A08), hats (A09–A12), and
@@ -212,6 +237,16 @@ lighter engine without PyTorch. You can then import stems you already have (e.g.
 5. The **sample browser** groups samples by category. You can play, rename, recategorize and
    set the key of each sample, trim it (✂), or re-detect its key (♪). **Export kit** zips the
    samples currently shown as `kit/<category>/<name>_<key>.wav`.
+   - **→ C** also exports every keyed sample transposed to C, each way in its own folder:
+     - `In C (repitched)/`: resampled like a sampler, so length and tempo change (a loop's
+       BPM tag is updated).
+     - `In C (warped)/`: pitch-shifted, same length.
+     - **both** writes the two folders.
+
+     Notes move to the nearest C (at most 6 semitones; `F#1` → `C1`). Keys keep their mode
+     (`A min` → `C min`). Samples already in C, or without a key, are not repeated. The
+     choice is remembered, and the same menu sits next to **Export pads** (pad-named
+     files, e.g. `In C (warped)/A01_kick_01_C1.wav`).
 
 ### Export folder
 
@@ -250,7 +285,7 @@ for example an album → a drum kit per song.
    The steps are **Separate** (model, stems, remainder) → **Stem tools** (any tool on any
    stem) → **Analyse** (tempo, song key) → **Drum kit** (source, size, uniqueness) →
    **Sound bits** (stems, chops/phrases, how many) → **Export** (which stems, original
-   mix, kit, sound bits, BPM/key in names, normalize). You can also choose whether to
+   mix, kit, sound bits, BPM/key in names, normalize, kit / bits also in C). You can also choose whether to
    keep each song as a ChopChop project to fine-tune later.
 3. **Output folder:** optional. It starts at the saved [export folder](#export-folder), and
    a folder you pick here becomes the new export folder. With none set, ChopChop's data
@@ -294,7 +329,8 @@ chopper batch ~/Music/Album --workflow-file mine.json    # …and run it
   - kit and sound bits: `--kit-size`, `--kit-source`, `--no-kit`, `--uniqueness`,
     `--bits vocals,bass`, `--bits-mode`;
   - export: `--export-stems all|kept|none|LIST`, `--export-mix`, `--no-bpm-names`,
-    `--no-key-names`, `--normalize`, `--keep-projects` / `--no-keep-projects`;
+    `--no-key-names`, `--normalize`, `--to-c repitched|warped|both`,
+    `--keep-projects` / `--no-keep-projects`;
   - input/output: `-o DIR`, `-r` (subfolders), `--only PATTERN`.
 
   `chopper batch --help` lists them all.

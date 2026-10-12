@@ -11,6 +11,7 @@ import tempfile
 import time
 from dataclasses import asdict
 from pathlib import Path
+from typing import Literal
 from urllib.parse import quote
 
 from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
@@ -18,7 +19,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import analysis, audio, kits, separation, settings, slicing, tempo, workflows
+from . import analysis, audio, kits, portions, separation, settings, slicing, tempo, transpose, workflows
 from .jobs import Job, JobRunner
 from .service import Chopper
 from .store import PAD_SLOTS, ProjectNotFound, Store, find_sample, find_track, new_id, safe_name
@@ -34,12 +35,14 @@ class DetectReq(BaseModel):
     min_gap: float = Field(0.08, ge=0.01, le=5)
     max_len: float | None = Field(None, gt=0)
     gate_db: float = Field(-40, ge=-90, le=0)
+    only_track: bool = False  # chop only this track: replaces its own slices, keeps the shared ones
 
 
 class Slice(BaseModel):
     id: str | None = None
     start: float = Field(ge=0)
     end: float = Field(gt=0)
+    track: str | None = None  # chop only this track; None = every track (lined up)
 
 
 class SlicesReq(BaseModel):
@@ -55,6 +58,12 @@ class ExportSlicesReq(BaseModel):
     normalize: bool = False
     key_names: bool = True  # detect each slice's key/note and put it in the file name
     bpm_names: bool = True  # tag slices ≥ ~1 beat with the project tempo
+    skip_silent: bool = True  # leave out slices that are (nearly) silent on a track
+
+
+class Part(BaseModel):
+    start: float = Field(ge=0)
+    end: float = Field(gt=0)
 
 
 class SeparateReq(BaseModel):
@@ -63,6 +72,7 @@ class SeparateReq(BaseModel):
     rest: bool = True  # mix the stems not kept into one extra track (e.g. "instrumental")
     debleed: bool = True  # move drum bleed out of other / guitar / piano into drums
     replace: bool = True  # remove the project's current stems first
+    parts: list[Part] | None = None  # only separate these parts of the track (stems silent elsewhere)
 
 
 class ToolReq(BaseModel):
@@ -123,6 +133,8 @@ class ExportKitReq(BaseModel):
     kit_name: str = "kit"
     normalize: bool = False
     from_pads: bool = False  # export what's on the pads, named A01_…, B02_…
+    # Also write keyed samples transposed to C, each way in its own folder.
+    to_c: Literal["none", "repitched", "warped", "both"] = "none"
 
 
 class BatchReq(BaseModel):
@@ -306,6 +318,7 @@ def create_app(store: Store | None = None) -> FastAPI:
             if t["kind"] == "mix":
                 raise HTTPException(400, "cannot delete the original mix")
             p["tracks"].remove(t)
+            p["slices"] = [s for s in p["slices"] if s.get("track") != name]  # its own chops go with it
         return {"ok": True}  # the file stays until no undo step needs it
 
     @app.get("/api/projects/{pid}/tracks/{name}/audio")
@@ -337,9 +350,13 @@ def create_app(store: Store | None = None) -> FastAPI:
         except ValueError as e:
             raise HTTPException(400, str(e))
 
+        parts = [(x.start, x.end) for x in req.parts] if req.parts else None
+        if parts and not portions.merge(parts, get_project(pid).get("duration") or float("inf")):
+            raise HTTPException(400, "no parts to separate (each part needs to be at least 0.05 s, inside the track)")
+
         def work(job: Job):
             return {"tracks": svc.separate(pid, req.model, req.stems, req.rest, req.replace, job.update,
-                                           debleed=req.debleed)}
+                                           debleed=req.debleed, parts=parts)}
 
         return asdict(jobs.submit("separate", pid, work))
 
@@ -566,14 +583,20 @@ def create_app(store: Store | None = None) -> FastAPI:
         y, sr = audio.read_mono(store.path(pid) / t["file"], sr=None)
         onsets = slicing.detect_onsets(y, sr, req.sensitivity, req.min_gap, req.gate_db)
         slices = slicing.slices_from_onsets(onsets, t["duration"], req.max_len)
-        with store.edit(pid, "Detect slices") as p:
-            p["slices"] = slices
-        return {"slices": slices}
+        if req.only_track:
+            for s in slices:
+                s["track"] = t["name"]
+        with store.edit(pid, f"Detect slices on {t['name']} only" if req.only_track else "Detect slices") as p:
+            # Only-this-track: its own slices are replaced, everything else stays.
+            keep = [s for s in p["slices"] if req.only_track and s.get("track") != t["name"]]
+            p["slices"] = sorted(keep + slices, key=lambda s: s["start"])
+            return {"slices": p["slices"]}
 
     @app.put("/api/projects/{pid}/slices")
     def put_slices(pid: str, req: SlicesReq):
         slices = sorted(
-            ({"id": s.id or new_id(), "start": round(s.start, 4), "end": round(s.end, 4)}
+            ({"id": s.id or new_id(), "start": round(s.start, 4), "end": round(s.end, 4),
+              **({"track": s.track} if s.track else {})}
              for s in req.slices if s.end > s.start),
             key=lambda s: s["start"],
         )
@@ -597,10 +620,10 @@ def create_app(store: Store | None = None) -> FastAPI:
 
         def work(job: Job):
             out = export_folder(p, "Slices")
-            path = slicing.export_slices(store.path(pid), tracks, slices, req.fade_in_ms, req.fade_out_ms,
-                                         req.normalize, bpm=bpm, keys=req.key_names, progress=job.update,
-                                         out_dir=out)
-            return export_result(pid, path, out, len(slices) * len(tracks))
+            path, written, silent = slicing.export_slices(
+                store.path(pid), tracks, slices, req.fade_in_ms, req.fade_out_ms, req.normalize, bpm=bpm,
+                keys=req.key_names, progress=job.update, out_dir=out, skip_silent=req.skip_silent)
+            return export_result(pid, path, out, written) | {"silent": silent}
 
         return asdict(jobs.submit("export:slices", pid, work))
 
@@ -625,7 +648,8 @@ def create_app(store: Store | None = None) -> FastAPI:
         def work(job: Job):
             saved = svc.build_kit(pid, names, req.mode, req.sensitivity, req.similarity, req.max_per_category,
                                   req.kit_size, req.load_pads, req.replace, job.update)
-            return {"samples": [s["id"] for s in saved], "pads_loaded": req.load_pads}
+            by_track = {n: sum(s["track"] == n for s in saved) for n in names}
+            return {"samples": [s["id"] for s in saved], "by_track": by_track, "pads_loaded": req.load_pads}
 
         return asdict(jobs.submit(f"kit:{req.mode}", pid, work))
 
@@ -746,13 +770,18 @@ def create_app(store: Store | None = None) -> FastAPI:
         if not samples:
             raise HTTPException(400, "no samples to export")
         bpm = (p.get("tempo") or {}).get("bpm")
+        to_c = transpose.modes(req.to_c)
         out = export_folder(p, "Pads" if req.from_pads else "Kit")
         if out:
-            kits.write_kit(store.path(pid), samples, out, req.normalize, labels, bpm)
+            kits.write_kit(store.path(pid), samples, out, req.normalize, labels, bpm, to_c)
             path = out
         else:
-            path = kits.export_kit(store.path(pid), p, samples, req.kit_name or p["name"], req.normalize, labels, bpm)
-        return export_result(pid, path, out, len(samples))
+            path = kits.export_kit(store.path(pid), p, samples, req.kit_name or p["name"], req.normalize, labels,
+                                   bpm, to_c)
+        result = export_result(pid, path, out, len(samples))
+        # Keyed samples not already in C, once per way of transposing.
+        result["transposed"] = sum(transpose.steps_to_c(s.get("key")) is not None for s in samples) * len(to_c)
+        return result
 
     # ---------- frontend ----------
 

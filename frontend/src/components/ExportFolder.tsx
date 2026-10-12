@@ -64,19 +64,22 @@ export function ExportFolder() {
   )
 }
 
+const inC = (r: ExportResult) =>
+  (r.transposed ? ` + ${r.transposed} in C` : '') + (r.silent ? ` (${r.silent} silent skipped)` : '')
+
 /** "12 files → <folder> [Show folder]" or "→ download zip". */
 export function ExportResultLine({ result, noun }: { result: ExportResult; noun: string }) {
   if (result.folder || !result.url) {
     return (
       <div className="result">
-        {result.count} {noun} saved to <span className="path" title={result.path}>{result.path}</span>{' '}
+        {result.count} {noun}{inC(result)} saved to <span className="path" title={result.path}>{result.path}</span>{' '}
         <button className="link" onClick={() => void api.reveal(result.path)}>Show folder</button>
       </div>
     )
   }
   return (
     <div className="result">
-      {result.count} {noun} → <a href={result.url}>download zip</a>
+      {result.count} {noun}{inC(result)} → <a href={result.url}>download zip</a>
       <div className="path" title={result.path}>{result.path}</div>
     </div>
   )

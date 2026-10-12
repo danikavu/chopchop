@@ -18,7 +18,8 @@ export interface LaneEvents {
   onScroll: (name: string, scrollLeft: number) => void
   onRegister: (name: string, ws: WaveSurfer | null) => void
   onSliceChange: (slice: Slice) => void
-  onSliceCreate: (start: number, end: number) => void
+  /** Drawn on this lane (the lane decides nothing: ProjectView picks shared / only-this-stem / part). */
+  onSliceCreate: (start: number, end: number, track: string) => void
   onSelectSlice: (id: string | null) => void
   onToggleExport: (name: string) => void
   onDelete?: (name: string) => void
@@ -100,7 +101,7 @@ export function TrackLane(props: Props) {
           // Drawn by the user: turn it into a slice; state re-renders it.
           const { start, end } = r
           r.remove()
-          if (end - start > 0.01) cb.current.onSliceCreate(start, end)
+          if (end - start > 0.01) cb.current.onSliceCreate(start, end, track.name)
         })
         regions.on('region-updated', (r) => cb.current.onSliceChange({ id: r.id, start: r.start, end: r.end }))
         regions.on('region-clicked', (r, e) => {
@@ -159,8 +160,12 @@ export function TrackLane(props: Props) {
         minLength: 0.005,
       })
       if (r.element) {
-        r.element.style.borderLeft = `1px solid ${withAlpha(hue, sel ? 1 : 0.75)}`
+        // Chops on this stem only: dashed edges, so they stand out from the shared ones.
+        const line = s.track ? 'dashed' : 'solid'
+        r.element.style.borderLeft = `1px ${line} ${withAlpha(hue, sel ? 1 : 0.75)}`
+        r.element.style.borderRight = s.track ? `1px dashed ${withAlpha(hue, 0.5)}` : ''
         r.element.style.boxShadow = sel ? `inset 0 0 0 1px ${withAlpha(hue, 0.9)}` : ''
+        r.element.title = s.track ? `Only on ${label(s.track)}` : ''
       }
     })
     syncing.current = false

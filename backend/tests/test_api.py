@@ -342,3 +342,131 @@ def test_project_exports_go_into_the_export_folder(client, tmp_path):
     # Same minute again: a new folder, nothing overwritten.
     again = client.post(f"/api/projects/{pid}/samples/export", json={"kit_name": "k"}).json()
     assert again["path"] != kit["path"]
+
+
+def test_export_keyed_samples_transposed_to_c(client, tmp_path):
+    import librosa
+
+    from chopper import transpose
+
+    # Three pitched sounds (E3, A3, C4) and one with no key.
+    y = synth.place([(0.0, synth.tone(52)), (1.0, synth.tone(57)), (2.0, synth.tone(60)), (3.0, synth.tone(57))], 4.0)
+    pid = client.post("/api/projects", files={"file": ("bass.wav", wav(y), "audio/wav")}).json()["id"]
+    ids = []
+    for i, key in enumerate(["E3", "A min", "C4", None]):
+        s = client.post(f"/api/projects/{pid}/samples", json={"track": "mix", "start": i, "end": i + 0.8,
+                                                               "name": f"bit{i}"}).json()
+        body = {"key": key} if key else {"clear_key": True}
+        client.patch(f"/api/projects/{pid}/samples/{s['id']}", json=body)
+        ids.append(s["id"])
+
+    out = tmp_path / "exp"
+    client.put("/api/settings", json={"export_dir": str(out)})
+    r = client.post(f"/api/projects/{pid}/samples/export", json={"kit_name": "k", "to_c": "both"}).json()
+    assert r["count"] == 4 and r["transposed"] == 4  # E3 and A min, two ways each; C4 and the unkeyed one skipped
+    root = Path(r["path"])
+    for mode in ("repitched", "warped"):
+        files = sorted(p.name for p in (root / transpose.FOLDERS[mode]).rglob("*.wav"))
+        assert files == ["bit0_C3.wav", "bit1_Cmin.wav"], files
+        moved, sr = sf.read(next((root / transpose.FOLDERS[mode]).rglob("bit0_C3.wav")))
+        f0 = np.median(librosa.yin(moved.T[0] if moved.ndim > 1 else moved, fmin=60, fmax=600, sr=sr)[:20])
+        assert librosa.hz_to_note(f0, unicode=False) == "C3", (mode, f0)
+        n_orig = sf.info(next(root.rglob("bit0_E3.wav"))).frames
+        n = len(moved)
+        assert (n > n_orig * 1.2) if mode == "repitched" else (n == n_orig)  # E3 -> C3 down 4: slower
+    assert len(list(root.rglob("*.wav"))) == 8
+
+    plain = client.post(f"/api/projects/{pid}/samples/export", json={"kit_name": "k"}).json()
+    assert plain["transposed"] == 0 and not any(p.parent.name.startswith("In C") for p in Path(plain["path"]).rglob("*"))
+    assert client.post(f"/api/projects/{pid}/samples/export", json={"to_c": "sideways"}).status_code == 422
+    # Pads: same option, pad-named.
+    client.put(f"/api/projects/{pid}/pads", json={"pads": [ids[0], ids[2]] + [None] * 62})
+    pads = client.post(f"/api/projects/{pid}/samples/export", json={"from_pads": True, "to_c": "repitched"}).json()
+    assert pads["transposed"] == 1
+    assert [p.name for p in (Path(pads["path"]) / "In C (repitched)").iterdir()] == ["A01_bit0_C3.wav"]
+
+
+def test_silent_chops_are_not_exported(client):
+    # Drums all through; vocals only from bar 3 (a beat intro before them), with faint bleed.
+    drums, _ = synth.drum_loop(bars=4)
+    n = drums.size
+    vocals = np.zeros(n, np.float32)
+    half = n // 2
+    vocals[half:] = 0.3 * np.sin(2 * np.pi * 330 * np.arange(n - half) / SR)  # a held note
+    vocals[:half] += np.random.default_rng(0).standard_normal(half).astype(np.float32) * 1e-4  # ~-70 dB hiss
+    pid = new_project_with_drums(client, drums)
+    client.post(f"/api/projects/{pid}/tracks", files={"file": ("Vocals.wav", wav(vocals), "audio/wav")})
+    dur = n / SR
+    grid = [{"id": f"s{i}", "start": i * dur / 8, "end": (i + 1) * dur / 8} for i in range(8)]  # chop to grid
+    client.put(f"/api/projects/{pid}/slices", json={"slices": grid})
+
+    j = wait(client, client.post(f"/api/projects/{pid}/slices/export",
+                                 json={"tracks": ["drums", "vocals"], "key_names": False}).json())
+    assert j["status"] == "done", j["error"]
+    assert (j["result"]["count"], j["result"]["silent"]) == (12, 4)
+    names = sorted(zipfile.ZipFile(io.BytesIO(client.get(j["result"]["url"]).content)).namelist())
+    assert len([x for x in names if x.startswith("drums/")]) == 8
+    # Vocal chops keep their slice numbers, so they line up with the drum chops.
+    assert [x.split("/")[1][:10] for x in names if x.startswith("vocals/")] == \
+        ["vocals_00" + str(i) for i in range(5, 9)]
+
+    j = wait(client, client.post(f"/api/projects/{pid}/slices/export",
+                                 json={"tracks": ["vocals"], "skip_silent": False, "key_names": False}).json())
+    assert (j["result"]["count"], j["result"]["silent"]) == (8, 0)
+
+    j = wait(client, client.post(f"/api/projects/{pid}/slices/export",
+                                 json={"tracks": ["vocals"], "slice_ids": ["s0", "s1"]}).json())
+    assert j["status"] == "error" and "silent" in j["error"]
+
+
+def test_sound_bits_from_several_tracks_judge_each_on_its_own(client):
+    # Loud bass and much quieter (-20 dB) vocals: the vocals still give bits.
+    bass = synth.place([(i * 0.5, synth.tone(36 + (i % 3), 0.45)) for i in range(8)], 4.2)
+    vox = synth.place([(0.25 + i * 0.5, synth.tone(64 + (i % 4), 0.4)) for i in range(7)], 4.2) * 0.1
+    pid = client.post("/api/projects", files={"file": ("song.wav", wav(bass + vox), "audio/wav")}).json()["id"]
+    client.post(f"/api/projects/{pid}/tracks", files={"file": ("Bass.wav", wav(bass), "audio/wav")})
+    client.post(f"/api/projects/{pid}/tracks", files={"file": ("Vocals.wav", wav(vox), "audio/wav")})
+    j = wait(client, client.post(f"/api/projects/{pid}/kits",
+                                 json={"track": "bass", "tracks": ["bass", "vocals"], "mode": "chops"}).json())
+    assert j["status"] == "done", j["error"]
+    counts = j["result"]["by_track"]
+    assert counts["bass"] > 0 and counts["vocals"] > 0, counts
+    assert sum(counts.values()) == len(j["result"]["samples"])
+    # One undo step for the whole run.
+    assert client.get(f"/api/projects/{pid}/history").json()["undo"] == "Extract sound bits from 2 tracks"
+
+
+def test_slices_on_one_track_only(client):
+    drums, _ = synth.drum_loop(bars=2)
+    vocals = (0.3 * np.sin(2 * np.pi * 330 * np.arange(drums.size) / SR)).astype(np.float32)
+    pid = new_project_with_drums(client, drums)
+    client.post(f"/api/projects/{pid}/tracks", files={"file": ("Vocals.wav", wav(vocals), "audio/wav")})
+    shared = [{"id": "a", "start": 0.0, "end": 0.5}, {"id": "b", "start": 0.5, "end": 1.0}]
+    solo = [{"id": "v1", "start": 1.2, "end": 1.6, "track": "vocals"}, {"id": "v2", "start": 2.0, "end": 2.4, "track": "vocals"}]
+    saved = client.put(f"/api/projects/{pid}/slices", json={"slices": shared + solo}).json()["slices"]
+    assert [s.get("track") for s in saved] == [None, None, "vocals", "vocals"]  # kept through a save
+
+    j = wait(client, client.post(f"/api/projects/{pid}/slices/export",
+                                 json={"tracks": ["drums", "vocals"], "key_names": False, "bpm_names": False}).json())
+    assert j["status"] == "done", j["error"]
+    names = sorted(zipfile.ZipFile(io.BytesIO(client.get(j["result"]["url"]).content)).namelist())
+    # Shared chops on both, numbered in step; vocals' own chops only on vocals, numbered apart.
+    assert names == ["drums/drums_001.wav", "drums/drums_002.wav",
+                     "vocals/vocals_001.wav", "vocals/vocals_002.wav",
+                     "vocals/vocals_only_001.wav", "vocals/vocals_only_002.wav"]
+    # A vocals-only chop on its own can't be exported from the drums.
+    r = wait(client, client.post(f"/api/projects/{pid}/slices/export", json={"tracks": ["drums"], "slice_ids": ["v1"]}).json())
+    assert r["status"] == "error" and "other tracks" in r["error"]
+
+    # Detect on one track only: replaces that track's own chops, keeps everything else.
+    got = client.post(f"/api/projects/{pid}/slices/detect", json={"track": "drums", "only_track": True}).json()["slices"]
+    assert {s["id"] for s in got} >= {"a", "b", "v1", "v2"}
+    drum_own = [s for s in got if s.get("track") == "drums"]
+    assert len(drum_own) >= 4
+    got = client.post(f"/api/projects/{pid}/slices/detect", json={"track": "drums", "only_track": True}).json()["slices"]
+    assert len([s for s in got if s.get("track") == "drums"]) == len(drum_own)  # replaced, not added again
+
+    # Removing a stem removes its own chops too.
+    client.delete(f"/api/projects/{pid}/tracks/vocals")
+    left = client.get(f"/api/projects/{pid}").json()["slices"]
+    assert not any(s.get("track") == "vocals" for s in left) and {"a", "b"} <= {s["id"] for s in left}
