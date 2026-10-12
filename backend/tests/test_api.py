@@ -417,3 +417,20 @@ def test_silent_chops_are_not_exported(client):
     j = wait(client, client.post(f"/api/projects/{pid}/slices/export",
                                  json={"tracks": ["vocals"], "slice_ids": ["s0", "s1"]}).json())
     assert j["status"] == "error" and "silent" in j["error"]
+
+
+def test_sound_bits_from_several_tracks_judge_each_on_its_own(client):
+    # Loud bass and much quieter (-20 dB) vocals: the vocals still give bits.
+    bass = synth.place([(i * 0.5, synth.tone(36 + (i % 3), 0.45)) for i in range(8)], 4.2)
+    vox = synth.place([(0.25 + i * 0.5, synth.tone(64 + (i % 4), 0.4)) for i in range(7)], 4.2) * 0.1
+    pid = client.post("/api/projects", files={"file": ("song.wav", wav(bass + vox), "audio/wav")}).json()["id"]
+    client.post(f"/api/projects/{pid}/tracks", files={"file": ("Bass.wav", wav(bass), "audio/wav")})
+    client.post(f"/api/projects/{pid}/tracks", files={"file": ("Vocals.wav", wav(vox), "audio/wav")})
+    j = wait(client, client.post(f"/api/projects/{pid}/kits",
+                                 json={"track": "bass", "tracks": ["bass", "vocals"], "mode": "chops"}).json())
+    assert j["status"] == "done", j["error"]
+    counts = j["result"]["by_track"]
+    assert counts["bass"] > 0 and counts["vocals"] > 0, counts
+    assert sum(counts.values()) == len(j["result"]["samples"])
+    # One undo step for the whole run.
+    assert client.get(f"/api/projects/{pid}/history").json()["undo"] == "Extract sound bits from 2 tracks"

@@ -196,10 +196,16 @@ lighter engine without PyTorch. You can then import stems you already have (e.g.
      example is a vocal stem during a beat intro. Numbers stay in step, so `drums_005`
      and `vocals_005` are still the same moment.
    - **Export to** sets where exports go (see [Export folder](#export-folder)).
-3. **Kits & bits** tab: **Build drum kit** on the drum stem (optionally loading it onto the
-   pads), or **Extract sound bits**
-   (chops or phrases) from any stem. Running it again on the same track replaces the samples
-   it made last time; samples you made by hand are kept.
+3. **Kits & bits** tab. Pick one or more tracks for each:
+   - **Build drum kit** (optionally loading it onto the pads). Several tracks make one kit
+     across them, e.g. split kick / snare / hat parts.
+   - **Extract sound bits** (chops or phrases). Each chosen stem is judged on its own, so
+     quiet vocals next to loud bass still give bits. **Extract & export** does it in one
+     click: it extracts, then exports just the new bits to the export folder (or as a
+     zip), with the **→ C** option.
+
+   The result line says how many came from each track. Running it again on the same track
+   replaces the samples it made last time; samples you made by hand are kept.
 4. **Drum pads**, 4 banks × 16 pads laid out like an MPC:
    - **Auto kit → pads** builds a kit from the drum stem and loads it onto bank A. Kicks go
      on the bottom row (A01–A04), then snares and claps (A05–A08), hats (A09–A12), and

@@ -163,10 +163,11 @@ class Chopper:
         sources = [find_track(p, n) for n in tracks]
         by_name = {t["name"]: t for t in sources}
         folder = self.store.path(pid)
-        # Several tracks (split drum parts): judge every hit against the loudest part, so a
-        # part holding only faint leftovers of the split yields nothing.
+        # Several drum parts (split drums): judge every hit against the loudest part, so a
+        # part holding only faint leftovers of the split yields nothing. Sound bits from
+        # several stems are judged per stem: quiet vocals next to loud bass are still vocals.
         ref = max(float(np.abs(audio.read(folder / t["file"])[0]).max()) for t in sources) \
-            if len(sources) > 1 else None
+            if len(sources) > 1 and mode == "drums" else None
         # And everything against the song: a sound more than 40 dB below the mix's peak
         # is inaudible in it, i.e. leftovers (e.g. drum traces in a near-empty "other").
         mix = next((t for t in p["tracks"] if t["kind"] == "mix"), None)

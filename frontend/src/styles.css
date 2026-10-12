@@ -325,6 +325,10 @@ input[type='checkbox'] { accent-color: var(--accent); margin: 0; }
 .card h2, .batch-runs h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin-bottom: 10px; }
 .card .row { margin-bottom: 8px; }
 .grow { flex: 1; min-width: 0; }
+.field-label { font-size: 12px; color: var(--muted); margin: 6px 0 5px; }
+/* Track pickers: make the chosen tracks unmistakable. */
+.panel-body .chip { color: var(--muted); }
+.panel-body .chip.on { border-color: var(--accent); color: var(--text); background: rgba(245, 158, 11, 0.14); }
 .path-input { font: 12px ui-monospace, monospace; }
 .song-list { max-height: 220px; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; margin-top: 8px; padding: 8px; background: var(--bg); border-radius: 0; }
 .song-list .check { color: var(--text); }

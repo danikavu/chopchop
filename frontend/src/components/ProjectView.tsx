@@ -724,7 +724,8 @@ export function ProjectView({ pid, meta, onBack }: Props) {
               }}
             />
           ) : (
-            <KitPanel key={tracks.map((t) => t.name).join()} pid={pid} tracks={tracks} onDone={() => void reload()} />
+            <KitPanel key={tracks.map((t) => t.name).join()} pid={pid} projectName={project.name} tracks={tracks}
+              onDone={() => void reload()} />
           )}
           {error && (
             <div className="error">

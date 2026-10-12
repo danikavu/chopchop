@@ -629,7 +629,8 @@ def create_app(store: Store | None = None) -> FastAPI:
         def work(job: Job):
             saved = svc.build_kit(pid, names, req.mode, req.sensitivity, req.similarity, req.max_per_category,
                                   req.kit_size, req.load_pads, req.replace, job.update)
-            return {"samples": [s["id"] for s in saved], "pads_loaded": req.load_pads}
+            by_track = {n: sum(s["track"] == n for s in saved) for n in names}
+            return {"samples": [s["id"] for s in saved], "by_track": by_track, "pads_loaded": req.load_pads}
 
         return asdict(jobs.submit(f"kit:{req.mode}", pid, work))
 

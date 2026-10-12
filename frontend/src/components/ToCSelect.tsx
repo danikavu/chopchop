@@ -42,7 +42,7 @@ export const TO_C_HELP =
   'Samples already in C or without a key are skipped.'
 
 /** "→ C [off|repitched|warped|both] n to move" */
-export function ToCSelect({ samples }: { samples: Sample[] }) {
+export function ToCSelect({ samples }: { samples?: Sample[] }) {
   const [toC, setToC] = useToC()
   return (
     <label className="check" title={TO_C_HELP}>
@@ -53,7 +53,7 @@ export function ToCSelect({ samples }: { samples: Sample[] }) {
         <option value="warped">warped</option>
         <option value="both">both</option>
       </select>
-      {toC !== 'none' && <span className="muted small">{transposable(samples)} to move</span>}
+      {toC !== 'none' && samples && <span className="muted small">{transposable(samples)} to move</span>}
     </label>
   )
 }
