@@ -42,6 +42,7 @@ function App() {
   return (
     <>
       <StickerBackground />
+      <div className="film-grain" aria-hidden />
       <div className="app">{page}</div>
     </>
   )
