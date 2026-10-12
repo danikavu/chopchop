@@ -178,6 +178,9 @@ lighter engine without PyTorch. You can then import stems you already have (e.g.
    - <kbd>Space</kbd> play/pause · <kbd>S</kbd> split at the playhead ·
      <kbd>Del</kbd> delete · <kbd>←</kbd>/<kbd>→</kbd> step through and audition ·
      <kbd>Enter</kbd> save the selected slice as a sample.
+   - **Loop** (transport, or <kbd>L</kbd>; off by default) repeats the selected chop
+     while it plays: click it, step to it with <kbd>←</kbd>/<kbd>→</kbd>, or press
+     <kbd>Space</kbd>. Selecting another chop loops that one.
    - **Chop one stem only:** hold <kbd>⌥/Alt</kbd> while drawing a slice or pressing
      <kbd>S</kbd>. Or press <kbd>O</kbd> (or **Only <stem>** in the transport) to stay in that
      mode, where **Detect**, **Chop to grid** and **clear** also work on just the focused

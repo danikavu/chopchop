@@ -92,6 +92,18 @@ export function ProjectView({ pid, meta, onBack }: Props) {
   const [altHeld, setAltHeld] = useState(false)
   const onlyRef = useRef(false)
   onlyRef.current = onlyStem || altHeld
+  // Loop the selected chop while it plays (off by default, not remembered).
+  const [loop, setLoop] = useState(false)
+  const loopRef = useRef(false)
+  loopRef.current = loop
+  const selectedRef = useRef<string | null>(null)
+  selectedRef.current = selectedId
+  // Selecting updates the ref at once: a chop clicked is played before React re-renders,
+  // and the loop must already know it's the new one.
+  const selectSlice = useCallback((id: string | null) => {
+    selectedRef.current = id
+    setSelectedId(id)
+  }, [])
 
   const lanes = useRef(new Map<string, WaveSurfer>())
   const lanesBox = useRef<HTMLDivElement>(null)
@@ -296,10 +308,23 @@ export function ProjectView({ pid, meta, onBack }: Props) {
     () => ({
       onFocus: setFocus,
       onTime: (name: string, t: number) => {
-        if (name === focusedRef.current) setTime(t)
+        if (name !== focusedRef.current) return
+        setTime(t)
+        // Looping: crossing the chop's end jumps back to its start.
+        const s = loopTarget()
+        const ws = lanes.current.get(name)
+        if (s && ws?.isPlaying() && t >= s.end && t < s.end + 0.25) void ws.play(s.start, s.end)
       },
       onPlayState: (name: string, p: boolean) => {
-        if (name === focusedRef.current) setPlaying(p)
+        if (name !== focusedRef.current) return
+        // A chop played to its end stops by itself: start it again (a pause elsewhere is the user's).
+        const s = !p ? loopTarget() : null
+        const ws = lanes.current.get(name)
+        if (s && ws && Math.abs(ws.getCurrentTime() - s.end) < 0.06) {
+          void ws.play(s.start, s.end)
+          return
+        }
+        setPlaying(p)
       },
       onScroll: (name: string, left: number) => {
         if (Math.abs(left - lastScroll.current) < 1) return
@@ -328,19 +353,42 @@ export function ProjectView({ pid, meta, onBack }: Props) {
         setSlices([...slicesRef.current, s], only ? `Draw slice on ${track} only` : 'Draw slice')
         setSelectedId(s.id)
       },
-      onSelectSlice: setSelectedId,
+      onSelectSlice: selectSlice,
       onToggleExport: (name: string) =>
         setExportTracks((cur) => (cur.includes(name) ? cur.filter((n) => n !== name) : [...cur, name])),
     }),
-    [setFocus, setSlices],
+    [setFocus, setSlices, selectSlice],
   )
 
   const focusedLane = () => lanes.current.get(focusedRef.current)
 
-  const togglePlay = () => void focusedLane()?.playPause()
+  /** The chop to loop: the selected one, if loop mode is on and it's on the playing lane. */
+  function loopTarget(): Slice | null {
+    if (!loopRef.current || !selectedRef.current) return null
+    const s = slicesRef.current.find((x) => x.id === selectedRef.current)
+    return s && (!s.track || s.track === focusedRef.current) ? s : null
+  }
+
+  const togglePlay = () => {
+    const ws = focusedLane()
+    if (!ws) return
+    // Looping, with the playhead outside the selected chop: play the chop.
+    const s = loopTarget()
+    const t = ws.getCurrentTime()
+    if (s && !ws.isPlaying() && (t < s.start || t >= s.end - 0.01)) void ws.play(s.start, s.end)
+    else void ws.playPause()
+  }
 
   /** Slices shown on a lane: the shared ones plus that track's own. */
   const onLane = (list: Slice[], track: string) => list.filter((s) => !s.track || s.track === track)
+  // One stable list per lane: a new array every render would make each lane redraw all
+  // its regions ~60×/s during playback (and swallow clicks landing mid-redraw).
+  const trackNames = project?.tracks.map((t) => t.name).join('\n') ?? ''
+  const laneSlices = useMemo(
+    () => new Map(trackNames.split('\n').map((n) => [n, onLane(slices, n)])),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [slices, trackNames],
+  )
 
   const splitAtPlayhead = (only = onlyRef.current) => {
     const t = snapRef.current ? snapTo(snapRef.current, timeRef.current) : timeRef.current
@@ -378,7 +426,7 @@ export function ProjectView({ pid, meta, onBack }: Props) {
     if (!cur.length) return
     const i = cur.findIndex((s) => s.id === selectedId)
     const next = cur[i < 0 ? (dir > 0 ? 0 : cur.length - 1) : Math.min(cur.length - 1, Math.max(0, i + dir))]
-    setSelectedId(next.id)
+    selectSlice(next.id)
     const ws = focusedLane()
     if (ws) {
       const w = ws.getWidth()
@@ -422,6 +470,10 @@ export function ProjectView({ pid, meta, onBack }: Props) {
         case 'o':
         case 'O':
           setOnlyStem((v) => !v)
+          break
+        case 'l':
+        case 'L':
+          setLoop((v) => !v)
           break
         case ' ':
           e.preventDefault()
@@ -634,6 +686,10 @@ export function ProjectView({ pid, meta, onBack }: Props) {
               title={project.tempo?.beats.length ? 'Show / hide the beat grid lines' : 'Detect the tempo first (BPM at the top)'}>
               Grid
             </button>
+            <button className={`grid-toggle ${loop ? 'on' : ''}`} onClick={() => setLoop((v) => !v)}
+              title="Loop the selected chop while it plays (L)">
+              Loop
+            </button>
             <button className={`grid-toggle ${onlyStem || altHeld ? 'on' : ''}`} onClick={() => setOnlyStem((v) => !v)}
               title="Chop only the focused stem: new slices belong to it alone (O to toggle, or hold ⌥/Alt)">
               Only {label(focused)}
@@ -656,7 +712,7 @@ export function ProjectView({ pid, meta, onBack }: Props) {
                 track={t}
                 color={trackColor(t.name, i)}
                 zoom={zoom}
-                slices={onLane(slices, t.name)}
+                slices={laneSlices.get(t.name) ?? slices}
                 selectedId={selectedId}
                 focused={focused === t.name}
                 exportChecked={exportTracks.includes(t.name)}
