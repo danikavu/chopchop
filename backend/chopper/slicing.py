@@ -186,25 +186,38 @@ def export_slices(
     out_dir: write plain files into this folder instead of a zip (returns the folder).
     skip_silent: leave out slices that are (nearly) silent on a track, see SILENT_DB.
           Numbers stay those of the slice, so drums_005 and vocals_005 still line up.
+    A slice with a "track" is cut only from that track, numbered on its own
+    (vocals_only_003.wav), so the shared numbering stays in step.
     """
     if not slices:
         raise ValueError("no slices to export")
     if not tracks:
         raise ValueError("no tracks selected")
-    ordered = sorted(slices, key=lambda s: s["start"])
+    shared = sorted((s for s in slices if not s.get("track")), key=lambda s: s["start"])
+    names = {t["name"] for t in tracks}
+    if not shared and not any(s.get("track") in names for s in slices):
+        raise ValueError("no slices on the selected tracks (the slices left belong to other tracks)")
+
+    def plan(track: dict) -> list[tuple[str, dict]]:
+        """(number, slice) to cut from this track: the shared ones, then its own."""
+        own = sorted((s for s in slices if s.get("track") == track["name"]), key=lambda s: s["start"])
+        w = max(3, len(str(len(own))))
+        return [(f"{i:0{width}d}", s) for i, s in enumerate(shared, 1)] + \
+               [(f"only_{i:0{w}d}", s) for i, s in enumerate(own, 1)]
     stamp = time.strftime("%Y%m%d-%H%M%S")
     zip_path = out_dir or project_dir / "exports" / f"slices-{stamp}-{new_id()[:4]}.zip"
     zip_path.parent.mkdir(parents=True, exist_ok=True)
-    width = max(3, len(str(len(ordered))))
-    total, done, written, skipped = len(tracks) * len(ordered), 0, 0, 0
+    width = max(3, len(str(len(shared))))
+    plans = [plan(t) for t in tracks]
+    total, done, written, skipped = sum(len(p) for p in plans), 0, 0, 0
     with _sink(out_dir, zip_path) as zf:
-        for t_i, track in enumerate(tracks, 1):
+        for t_i, (track, cuts) in enumerate(zip(tracks, plans), 1):
             src = project_dir / track["file"]
             y_full, sr = audio.read(src)
             label = safe_name(track["name"])
             drums = analysis.is_drum_track(track["name"])
             floor = float(np.abs(y_full).max(initial=0.0)) * 10 ** (SILENT_DB / 20)
-            for i, s in enumerate(ordered, 1):
+            for i, (num, s) in enumerate(cuts, 1):
                 a, b = int(s["start"] * sr), int(s["end"] * sr)
                 raw = y_full[:, a:b]
                 done += 1
@@ -215,11 +228,11 @@ def export_slices(
                 seg = audio.apply_fades(raw, sr, fade_in_ms, fade_out_ms)
                 if norm:
                     seg = audio.normalize(seg)
-                name = export_name(f"{label}_{i:0{width}d}", bpm, s["end"] - s["start"], key)
+                name = export_name(f"{label}_{num}", bpm, s["end"] - s["start"], key)
                 zf.writestr(f"{label}/{name}.wav", audio.wav_bytes24(seg, sr))
                 written += 1
                 if progress and (done % 10 == 0 or done == total):
-                    progress(done / total, f"Track {t_i}/{len(tracks)} ({track['name']}) · slice {i}/{len(ordered)}")
+                    progress(done / total, f"Track {t_i}/{len(tracks)} ({track['name']}) · slice {i}/{len(cuts)}")
     if not written:
         if out_dir is None:
             zip_path.unlink(missing_ok=True)

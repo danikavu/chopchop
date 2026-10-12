@@ -11,6 +11,14 @@ export interface Slice {
   id: string
   start: number
   end: number
+  /** Chop only this track; unset = every track (lined up). */
+  track?: string
+}
+
+/** A part of the track to separate (seconds). */
+export interface Part {
+  start: number
+  end: number
 }
 
 export interface Sample {

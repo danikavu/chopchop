@@ -13,7 +13,7 @@ from typing import Callable
 
 import numpy as np
 
-from . import analysis, audio, kits, separation, tempo
+from . import analysis, audio, kits, portions, separation, tempo
 from .store import Store, find_track, new_id, safe_name
 
 Progress = Callable[[float, str], None]
@@ -74,17 +74,28 @@ class Chopper:
 
     def separate(self, pid: str, model: str, stems: list[str] | None = None, rest: bool = True,
                  replace: bool = True, progress: Progress = _quiet, tempo_after: bool = True,
-                 debleed: bool = True) -> list[str]:
-        """Separate the mix; returns the names of the new stem tracks. One undo step."""
+                 debleed: bool = True, parts: list[tuple[float, float]] | None = None) -> list[str]:
+        """Separate the mix; returns the names of the new stem tracks. One undo step.
+
+        parts: only separate these (start, end) seconds; the stems are silent elsewhere
+        but still full length, in line with the mix (see portions.py)."""
         keep = self.check_separate(model, stems)
         p = self.store.get(pid)
         folder = self.store.path(pid)
         mix = next(t for t in p["tracks"] if t["kind"] == "mix")
         out = folder / "separation" / new_id()
         try:
-            found = separation.separate(folder / mix["file"], out, model, progress)
+            src, layout = folder / mix["file"], None
+            if parts:
+                src, layout, length = portions.excerpt(src, parts, out / "parts")
+                progress(0.01, f"Separating {len(layout)} part{'s' if len(layout) > 1 else ''} "
+                         f"({sum(p['end'] - p['start'] for p in layout):.0f} s of {length:.0f} s)…")
+            found = separation.separate(src, out, model, progress)
             if debleed:
                 found = separation.debleed(found, out, progress)
+            if layout:
+                progress(0.88, "Putting the parts back in place…")
+                found = portions.stitch(found, layout, length, out / "stitched")
             if set(keep) < set(found):
                 dropped = [n for n in found if n not in keep]
                 progress(0.89, f"Mixing {', '.join(dropped)} into {separation.rest_name(keep)}…"
@@ -94,7 +105,7 @@ class Chopper:
             order = next(m for m in separation.MODELS if m["id"] == model)["stems"]
             found = dict(sorted(found.items(), key=lambda kv: order.index(kv[0]) if kv[0] in order else 99))
             added = []
-            with self.store.undo_group(pid, "Separate stems"):
+            with self.store.undo_group(pid, f"Separate stems ({len(layout)} parts)" if layout else "Separate stems"):
                 if replace:
                     with self.store.edit(pid) as proj:
                         proj["tracks"] = [t for t in proj["tracks"] if t["kind"] != "stem"]

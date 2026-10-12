@@ -396,3 +396,14 @@ body { background: var(--bg); }
 .project-list-head h2 { margin: 0; }
 .project-search { width: 260px; }
 .grid-toggle.on { border-color: #ef4444; color: #fca5a5; }
+
+/* ---------- only-this-stem chops / separation parts ---------- */
+.only-note { margin: 0 0 8px; padding: 6px 8px; font-size: 12px; border: 1px dashed var(--accent); color: var(--text); }
+.sep-part {
+  position: absolute; top: 16px; bottom: 0; z-index: 3; pointer-events: none;
+  background: repeating-linear-gradient(135deg, rgba(52, 211, 153, 0.16) 0 6px, rgba(52, 211, 153, 0.05) 6px 12px);
+  border-left: 1px solid var(--ok); border-right: 1px solid var(--ok);
+}
+.sep-parts { margin: 4px 0 8px; display: flex; flex-direction: column; gap: 6px; }
+.sep-parts .chip { text-transform: none; }
+.sep-parts .chip .link { padding: 0 0 0 4px; }

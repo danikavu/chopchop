@@ -31,6 +31,8 @@ interface Props {
   onDragGrid: (v: boolean) => void
   showGrid: boolean
   onShowGrid: (v: boolean) => void
+  /** "Only this stem" mode: new chops belong to the focused track alone. */
+  onlyTrack: boolean
 }
 
 const newId = () => Math.random().toString(16).slice(2, 12).padEnd(10, '0')
@@ -67,6 +69,7 @@ export function SlicePanel(p: Props) {
         min_gap: minGap,
         max_len: maxLen > 0 ? maxLen : null,
         gate_db: gate,
+        only_track: p.onlyTrack,
       })
       p.onSlices(r.slices, null) // the server already recorded "Detect slices"
     } catch (e) {
@@ -100,6 +103,12 @@ export function SlicePanel(p: Props) {
     }
   }
 
+  // In "only this stem" mode, chopping / clearing touches just the focused track's own chops.
+  const own = p.slices.filter((s) => s.track === p.focused)
+  const others = p.slices.filter((s) => s.track !== p.focused)
+  const shown = p.slices.filter((s) => !s.track || s.track === p.focused)
+  const where = p.onlyTrack ? ` on ${label(p.focused)} only` : ''
+
   const hasGrid = p.grid.length > 1
   /** One slice per grid cell (e.g. 1-bar loops), clipped to the track. */
   const chopToGrid = () => {
@@ -107,8 +116,9 @@ export function SlicePanel(p: Props) {
       id: newId(),
       start,
       end: Math.min(p.grid[i + 1], p.duration),
-    }))
-    p.onSlices(cells.filter((c) => c.end - c.start > 0.01), 'Chop to grid')
+      ...(p.onlyTrack ? { track: p.focused } : {}),
+    })).filter((c) => c.end - c.start > 0.01)
+    p.onSlices(p.onlyTrack ? [...others, ...cells] : cells, `Chop to grid${where}`)
   }
   const snapAll = () => {
     const out = p.slices.map((s) => {
@@ -146,13 +156,15 @@ export function SlicePanel(p: Props) {
         <Slider label="Gate" value={gate} min={-80} max={-6} step={1} onChange={setGate}
           format={(v) => `${v} dB`} hint="Ignore hits quieter than this" />
         <button className="primary wide" onClick={detect} disabled={busy !== null}>
-          {busy === 'detect' ? 'Detecting…' : `Detect on ${label(p.focused)}`}
+          {busy === 'detect' ? 'Detecting…' : p.onlyTrack ? `Detect on ${label(p.focused)} only` : `Detect on ${label(p.focused)}`}
         </button>
         <div className="stat">
-          {p.slices.length} slice{p.slices.length === 1 ? '' : 's'}
-          {p.slices.length > 0 && (
-            <button className="link" onClick={() => p.onSlices([], 'Clear slices')}>
-              clear
+          {shown.length} slice{shown.length === 1 ? '' : 's'} on {label(p.focused)}
+          {own.length > 0 && <span className="muted"> ({own.length} only here)</span>}
+          {(p.onlyTrack ? own.length : p.slices.length) > 0 && (
+            <button className="link" onClick={() => p.onSlices(p.onlyTrack ? others : [], `Clear slices${where}`)}
+              title={p.onlyTrack ? `Clear the chops that are only on ${label(p.focused)}` : 'Clear every slice'}>
+              {p.onlyTrack ? 'clear these' : 'clear'}
             </button>
           )}
         </div>
@@ -160,6 +172,11 @@ export function SlicePanel(p: Props) {
           Drag on a waveform to draw a slice · drag edges to adjust · click to play ·{' '}
           <kbd>S</kbd> split at playhead · <kbd>Del</kbd> delete · <kbd>Enter</kbd> save as sample ·{' '}
           <kbd>←</kbd>/<kbd>→</kbd> step through slices
+        </p>
+        <p className="tip">
+          Hold <kbd>⌥/Alt</kbd> while drawing or pressing <kbd>S</kbd> to chop <b>only that stem</b> (dashed edges),
+          or press <kbd>O</kbd> to stay in that mode. Those chops export from that stem alone, as{' '}
+          <code>{label(p.focused).toLowerCase()}_only_001…</code>
         </p>
         <button className="wide" onClick={p.onSaveSelectedAsSample} disabled={!p.selectedId}>
           Save selected slice as sample

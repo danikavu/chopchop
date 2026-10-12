@@ -19,7 +19,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import analysis, audio, kits, separation, settings, slicing, tempo, transpose, workflows
+from . import analysis, audio, kits, portions, separation, settings, slicing, tempo, transpose, workflows
 from .jobs import Job, JobRunner
 from .service import Chopper
 from .store import PAD_SLOTS, ProjectNotFound, Store, find_sample, find_track, new_id, safe_name
@@ -35,12 +35,14 @@ class DetectReq(BaseModel):
     min_gap: float = Field(0.08, ge=0.01, le=5)
     max_len: float | None = Field(None, gt=0)
     gate_db: float = Field(-40, ge=-90, le=0)
+    only_track: bool = False  # chop only this track: replaces its own slices, keeps the shared ones
 
 
 class Slice(BaseModel):
     id: str | None = None
     start: float = Field(ge=0)
     end: float = Field(gt=0)
+    track: str | None = None  # chop only this track; None = every track (lined up)
 
 
 class SlicesReq(BaseModel):
@@ -59,12 +61,18 @@ class ExportSlicesReq(BaseModel):
     skip_silent: bool = True  # leave out slices that are (nearly) silent on a track
 
 
+class Part(BaseModel):
+    start: float = Field(ge=0)
+    end: float = Field(gt=0)
+
+
 class SeparateReq(BaseModel):
     model: str = "htdemucs_6s.yaml"
     stems: list[str] | None = None  # which stems to keep; None = all the model makes
     rest: bool = True  # mix the stems not kept into one extra track (e.g. "instrumental")
     debleed: bool = True  # move drum bleed out of other / guitar / piano into drums
     replace: bool = True  # remove the project's current stems first
+    parts: list[Part] | None = None  # only separate these parts of the track (stems silent elsewhere)
 
 
 class ToolReq(BaseModel):
@@ -310,6 +318,7 @@ def create_app(store: Store | None = None) -> FastAPI:
             if t["kind"] == "mix":
                 raise HTTPException(400, "cannot delete the original mix")
             p["tracks"].remove(t)
+            p["slices"] = [s for s in p["slices"] if s.get("track") != name]  # its own chops go with it
         return {"ok": True}  # the file stays until no undo step needs it
 
     @app.get("/api/projects/{pid}/tracks/{name}/audio")
@@ -341,9 +350,13 @@ def create_app(store: Store | None = None) -> FastAPI:
         except ValueError as e:
             raise HTTPException(400, str(e))
 
+        parts = [(x.start, x.end) for x in req.parts] if req.parts else None
+        if parts and not portions.merge(parts, get_project(pid).get("duration") or float("inf")):
+            raise HTTPException(400, "no parts to separate (each part needs to be at least 0.05 s, inside the track)")
+
         def work(job: Job):
             return {"tracks": svc.separate(pid, req.model, req.stems, req.rest, req.replace, job.update,
-                                           debleed=req.debleed)}
+                                           debleed=req.debleed, parts=parts)}
 
         return asdict(jobs.submit("separate", pid, work))
 
@@ -570,14 +583,20 @@ def create_app(store: Store | None = None) -> FastAPI:
         y, sr = audio.read_mono(store.path(pid) / t["file"], sr=None)
         onsets = slicing.detect_onsets(y, sr, req.sensitivity, req.min_gap, req.gate_db)
         slices = slicing.slices_from_onsets(onsets, t["duration"], req.max_len)
-        with store.edit(pid, "Detect slices") as p:
-            p["slices"] = slices
-        return {"slices": slices}
+        if req.only_track:
+            for s in slices:
+                s["track"] = t["name"]
+        with store.edit(pid, f"Detect slices on {t['name']} only" if req.only_track else "Detect slices") as p:
+            # Only-this-track: its own slices are replaced, everything else stays.
+            keep = [s for s in p["slices"] if req.only_track and s.get("track") != t["name"]]
+            p["slices"] = sorted(keep + slices, key=lambda s: s["start"])
+            return {"slices": p["slices"]}
 
     @app.put("/api/projects/{pid}/slices")
     def put_slices(pid: str, req: SlicesReq):
         slices = sorted(
-            ({"id": s.id or new_id(), "start": round(s.start, 4), "end": round(s.end, 4)}
+            ({"id": s.id or new_id(), "start": round(s.start, 4), "end": round(s.end, 4),
+              **({"track": s.track} if s.track else {})}
              for s in req.slices if s.end > s.start),
             key=lambda s: s["start"],
         )

@@ -434,3 +434,39 @@ def test_sound_bits_from_several_tracks_judge_each_on_its_own(client):
     assert sum(counts.values()) == len(j["result"]["samples"])
     # One undo step for the whole run.
     assert client.get(f"/api/projects/{pid}/history").json()["undo"] == "Extract sound bits from 2 tracks"
+
+
+def test_slices_on_one_track_only(client):
+    drums, _ = synth.drum_loop(bars=2)
+    vocals = (0.3 * np.sin(2 * np.pi * 330 * np.arange(drums.size) / SR)).astype(np.float32)
+    pid = new_project_with_drums(client, drums)
+    client.post(f"/api/projects/{pid}/tracks", files={"file": ("Vocals.wav", wav(vocals), "audio/wav")})
+    shared = [{"id": "a", "start": 0.0, "end": 0.5}, {"id": "b", "start": 0.5, "end": 1.0}]
+    solo = [{"id": "v1", "start": 1.2, "end": 1.6, "track": "vocals"}, {"id": "v2", "start": 2.0, "end": 2.4, "track": "vocals"}]
+    saved = client.put(f"/api/projects/{pid}/slices", json={"slices": shared + solo}).json()["slices"]
+    assert [s.get("track") for s in saved] == [None, None, "vocals", "vocals"]  # kept through a save
+
+    j = wait(client, client.post(f"/api/projects/{pid}/slices/export",
+                                 json={"tracks": ["drums", "vocals"], "key_names": False, "bpm_names": False}).json())
+    assert j["status"] == "done", j["error"]
+    names = sorted(zipfile.ZipFile(io.BytesIO(client.get(j["result"]["url"]).content)).namelist())
+    # Shared chops on both, numbered in step; vocals' own chops only on vocals, numbered apart.
+    assert names == ["drums/drums_001.wav", "drums/drums_002.wav",
+                     "vocals/vocals_001.wav", "vocals/vocals_002.wav",
+                     "vocals/vocals_only_001.wav", "vocals/vocals_only_002.wav"]
+    # A vocals-only chop on its own can't be exported from the drums.
+    r = wait(client, client.post(f"/api/projects/{pid}/slices/export", json={"tracks": ["drums"], "slice_ids": ["v1"]}).json())
+    assert r["status"] == "error" and "other tracks" in r["error"]
+
+    # Detect on one track only: replaces that track's own chops, keeps everything else.
+    got = client.post(f"/api/projects/{pid}/slices/detect", json={"track": "drums", "only_track": True}).json()["slices"]
+    assert {s["id"] for s in got} >= {"a", "b", "v1", "v2"}
+    drum_own = [s for s in got if s.get("track") == "drums"]
+    assert len(drum_own) >= 4
+    got = client.post(f"/api/projects/{pid}/slices/detect", json={"track": "drums", "only_track": True}).json()["slices"]
+    assert len([s for s in got if s.get("track") == "drums"]) == len(drum_own)  # replaced, not added again
+
+    # Removing a stem removes its own chops too.
+    client.delete(f"/api/projects/{pid}/tracks/vocals")
+    left = client.get(f"/api/projects/{pid}").json()["slices"]
+    assert not any(s.get("track") == "vocals" for s in left) and {"a", "b"} <= {s["id"] for s in left}

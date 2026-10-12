@@ -167,6 +167,10 @@ lighter engine without PyTorch. You can then import stems you already have (e.g.
      only vocals are kept, `no_drums` when only drums are, `rest` otherwise. Or drop them.
    - **Separate…** in the top bar re-runs it later with another model or choice. It
      replaces the current stems, and one undo brings them back.
+   - **Only parts of the track:** tick it, then drag on the waveform to mark each part (or
+     add the selected slice). Only those parts are separated, in one model run, with a
+     second of context around each, so a short section takes a fraction of the time. The
+     stems are silent elsewhere but stay full length, in line with the mix.
 2. **Slice** tab: choose a track, tune sensitivity, gap and gate, then click **Detect**.
    Slices appear on every lane, so you can listen to the same chop across all stems.
    - Drag on a waveform to draw a slice; drag its edges or body to adjust it.
@@ -174,6 +178,14 @@ lighter engine without PyTorch. You can then import stems you already have (e.g.
    - <kbd>Space</kbd> play/pause · <kbd>S</kbd> split at the playhead ·
      <kbd>Del</kbd> delete · <kbd>←</kbd>/<kbd>→</kbd> step through and audition ·
      <kbd>Enter</kbd> save the selected slice as a sample.
+   - **Chop one stem only:** hold <kbd>⌥/Alt</kbd> while drawing a slice or pressing
+     <kbd>S</kbd>. Or press <kbd>O</kbd> (or **Only <stem>** in the transport) to stay in that
+     mode, where **Detect**, **Chop to grid** and **clear** also work on just the focused
+     stem.
+     - Those chops have dashed edges and show only on their stem's lane.
+     - They export only from that stem, numbered on their own (`vocals_only_001.wav`), so
+       shared chops keep their lined-up numbers.
+     - Removing the stem removes its chops.
    - **Beat grid**, once the tempo is known:
      - pick a resolution from 1/16 up to 4 bars;
      - **Chop to grid** makes one slice per cell, e.g. 1-bar loops;
