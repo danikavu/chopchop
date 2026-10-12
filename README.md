@@ -1,4 +1,9 @@
-# ChopChop
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="frontend/src/assets/chopchop-logo.png">
+    <img src="frontend/src/assets/chopchop-logo-dark.png" alt="ChopChop" width="432">
+  </picture>
+</p>
 
 A local app for chopping music. Load a track, and ChopChop splits it into stems with UVR
 models. From there you can:
