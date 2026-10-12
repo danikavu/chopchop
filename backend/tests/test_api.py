@@ -379,3 +379,8 @@ def test_export_keyed_samples_transposed_to_c(client, tmp_path):
     plain = client.post(f"/api/projects/{pid}/samples/export", json={"kit_name": "k"}).json()
     assert plain["transposed"] == 0 and not any(p.parent.name.startswith("In C") for p in Path(plain["path"]).rglob("*"))
     assert client.post(f"/api/projects/{pid}/samples/export", json={"to_c": "sideways"}).status_code == 422
+    # Pads: same option, pad-named.
+    client.put(f"/api/projects/{pid}/pads", json={"pads": [ids[0], ids[2]] + [None] * 62})
+    pads = client.post(f"/api/projects/{pid}/samples/export", json={"from_pads": True, "to_c": "repitched"}).json()
+    assert pads["transposed"] == 1
+    assert [p.name for p in (Path(pads["path"]) / "In C (repitched)").iterdir()] == ["A01_bit0_C3.wav"]

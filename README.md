@@ -220,7 +220,8 @@ lighter engine without PyTorch. You can then import stems you already have (e.g.
 
      Notes move to the nearest C (at most 6 semitones; `F#1` → `C1`). Keys keep their mode
      (`A min` → `C min`). Samples already in C, or without a key, are not repeated. The
-     choice is remembered.
+     choice is remembered, and the same menu sits next to **Export pads** (pad-named
+     files, e.g. `In C (warped)/A01_kick_01_C1.wav`).
 
 ### Export folder
 
@@ -259,7 +260,7 @@ for example an album → a drum kit per song.
    The steps are **Separate** (model, stems, remainder) → **Stem tools** (any tool on any
    stem) → **Analyse** (tempo, song key) → **Drum kit** (source, size, uniqueness) →
    **Sound bits** (stems, chops/phrases, how many) → **Export** (which stems, original
-   mix, kit, sound bits, BPM/key in names, normalize). You can also choose whether to
+   mix, kit, sound bits, BPM/key in names, normalize, kit / bits also in C). You can also choose whether to
    keep each song as a ChopChop project to fine-tune later.
 3. **Output folder:** optional. It starts at the saved [export folder](#export-folder), and
    a folder you pick here becomes the new export folder. With none set, ChopChop's data
@@ -303,7 +304,8 @@ chopper batch ~/Music/Album --workflow-file mine.json    # …and run it
   - kit and sound bits: `--kit-size`, `--kit-source`, `--no-kit`, `--uniqueness`,
     `--bits vocals,bass`, `--bits-mode`;
   - export: `--export-stems all|kept|none|LIST`, `--export-mix`, `--no-bpm-names`,
-    `--no-key-names`, `--normalize`, `--keep-projects` / `--no-keep-projects`;
+    `--no-key-names`, `--normalize`, `--to-c repitched|warped|both`,
+    `--keep-projects` / `--no-keep-projects`;
   - input/output: `-o DIR`, `-r` (subfolders), `--only PATTERN`.
 
   `chopper batch --help` lists them all.

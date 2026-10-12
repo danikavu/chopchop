@@ -1,10 +1,11 @@
 import { useMemo, useState } from 'react'
 import { api } from '../api'
-import type { ExportResult, Meta, Sample, ToC } from '../types'
+import type { ExportResult, Meta, Sample } from '../types'
 import { categoryColor, keySuggestions, label, playPreview } from '../util'
 import { SAMPLE_MIME } from './DrumPads'
 import { ExportResultLine, useExportDir } from './ExportFolder'
 import { MiniWave } from './MiniWave'
+import { ToCSelect, useToC } from './ToCSelect'
 
 interface Props {
   pid: string
@@ -33,21 +34,7 @@ export function SampleBrowser({ pid, pads, onLoadToPad, projectName, samples, me
   const [normalize, setNormalize] = useState(false)
   const [result, setResult] = useState<ExportResult | null>(null)
   const [exportDir] = useExportDir()
-  const [toC, setToC] = useState<ToC>(() => {
-    try {
-      return (localStorage.getItem('chopchop.toC') as ToC) || 'none'
-    } catch {
-      return 'none'
-    }
-  })
-  const pickToC = (v: ToC) => {
-    setToC(v)
-    try {
-      localStorage.setItem('chopchop.toC', v)
-    } catch {
-      /* private mode: just not remembered */
-    }
-  }
+  const [toC] = useToC()
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
@@ -71,9 +58,6 @@ export function SampleBrowser({ pid, pads, onLoadToPad, projectName, samples, me
       setError((e as Error).message)
     }
   }
-
-  // Keyed samples a C export would add (C itself and unkeyed ones are skipped).
-  const transposable = shown.filter((s) => s.key && !/^C(?![#b])/i.test(s.key.trim())).length
 
   const exportKit = async () => {
     setBusy(true)
@@ -126,18 +110,7 @@ export function SampleBrowser({ pid, pads, onLoadToPad, projectName, samples, me
         <label className="check">
           <input type="checkbox" checked={normalize} onChange={(e) => setNormalize(e.target.checked)} /> normalize
         </label>
-        <label className="check" title={'Also export every keyed sample transposed to C, in its own folder.\n' +
-          'Repitched: resampled like a sampler (length and tempo change).\nWarped: pitch-shifted, same length.\n' +
-          'Samples already in C or without a key are skipped.'}>
-          → C
-          <select value={toC} onChange={(e) => pickToC(e.target.value as ToC)}>
-            <option value="none">off</option>
-            <option value="repitched">repitched</option>
-            <option value="warped">warped</option>
-            <option value="both">both</option>
-          </select>
-          {toC !== 'none' && <span className="muted small">{transposable} to move</span>}
-        </label>
+        <ToCSelect samples={shown} />
         <button className="primary" disabled={busy || !shown.length} onClick={exportKit}
           title={exportDir ? `Saves into ${exportDir}` : 'Downloads a zip (set an export folder in the Slices panel)'}>
           {busy ? 'Exporting…' : `Export kit (${shown.length})`}

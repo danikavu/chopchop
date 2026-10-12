@@ -135,6 +135,7 @@ export interface Workflow {
     bpm_names: boolean
     key_names: boolean
     normalize: boolean
+    to_c?: ToC
   }
   keep_projects: boolean
 }
