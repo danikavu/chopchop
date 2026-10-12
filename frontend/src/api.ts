@@ -132,6 +132,7 @@ export const api = {
       normalize: boolean
       key_names: boolean
       bpm_names: boolean
+      skip_silent: boolean
     },
   ) => req<Job>('POST', `${P(pid)}/slices/export`, body),
 

@@ -56,6 +56,7 @@ class ExportSlicesReq(BaseModel):
     normalize: bool = False
     key_names: bool = True  # detect each slice's key/note and put it in the file name
     bpm_names: bool = True  # tag slices ≥ ~1 beat with the project tempo
+    skip_silent: bool = True  # leave out slices that are (nearly) silent on a track
 
 
 class SeparateReq(BaseModel):
@@ -600,10 +601,10 @@ def create_app(store: Store | None = None) -> FastAPI:
 
         def work(job: Job):
             out = export_folder(p, "Slices")
-            path = slicing.export_slices(store.path(pid), tracks, slices, req.fade_in_ms, req.fade_out_ms,
-                                         req.normalize, bpm=bpm, keys=req.key_names, progress=job.update,
-                                         out_dir=out)
-            return export_result(pid, path, out, len(slices) * len(tracks))
+            path, written, silent = slicing.export_slices(
+                store.path(pid), tracks, slices, req.fade_in_ms, req.fade_out_ms, req.normalize, bpm=bpm,
+                keys=req.key_names, progress=job.update, out_dir=out, skip_silent=req.skip_silent)
+            return export_result(pid, path, out, written) | {"silent": silent}
 
         return asdict(jobs.submit("export:slices", pid, work))
 

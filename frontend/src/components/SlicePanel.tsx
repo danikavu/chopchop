@@ -46,6 +46,7 @@ export function SlicePanel(p: Props) {
   const [busy, setBusy] = useState<'detect' | 'export' | null>(null)
   const [keyNames, setKeyNames] = useState(true)
   const [bpmNames, setBpmNames] = useState(true)
+  const [skipSilent, setSkipSilent] = useState(true)
   const [exportJob, setExportJob] = useState<string | null>(null)
   const job = useJob(exportJob, (j: Job) => {
     setExportJob(null)
@@ -90,6 +91,7 @@ export function SlicePanel(p: Props) {
         normalize,
         key_names: keyNames,
         bpm_names: bpmNames,
+        skip_silent: skipSilent,
       })
       setExportJob(j.id) // busy until the job finishes
     } catch (e) {
@@ -249,6 +251,10 @@ export function SlicePanel(p: Props) {
           <input type="checkbox" checked={bpmNames && !!p.tempo?.bpm} disabled={!p.tempo?.bpm}
             onChange={(e) => setBpmNames(e.target.checked)} />
           BPM in loop names
+        </label>
+        <label className="check" title="Leave out chops that are (nearly) silent on a track, e.g. a vocal stem before the vocals come in. Numbers stay in step across tracks.">
+          <input type="checkbox" checked={skipSilent} onChange={(e) => setSkipSilent(e.target.checked)} />
+          Skip silent chops
         </label>
         <ExportFolder />
         <div className="row">

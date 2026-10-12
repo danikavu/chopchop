@@ -14,6 +14,9 @@ from .naming import export_name
 from .store import new_id, safe_name
 
 HOP = 256
+# A slice whose peak is this far below its track's loudest moment is "muted" on that
+# track (a vocal stem before the vocals come in, bleed): not worth a file.
+SILENT_DB = -40.0
 
 
 def detect_onsets(
@@ -172,13 +175,17 @@ def export_slices(
     keys: bool = False,
     progress=None,
     out_dir: Path | None = None,
-) -> Path:
+    skip_silent: bool = True,
+) -> tuple[Path, int, int]:
     """Cut every slice out of every selected track into one zip, one folder per track.
+    Returns (zip or folder, files written, silent slices skipped).
 
     bpm:  tag slices at least ~a beat long with the tempo (drums_004_96bpm.wav).
     keys: detect each slice's key / note and add it (bass_012_E1.wav). Slow-ish
           (~35 ms per slice per track), hence the progress callback.
     out_dir: write plain files into this folder instead of a zip (returns the folder).
+    skip_silent: leave out slices that are (nearly) silent on a track, see SILENT_DB.
+          Numbers stay those of the slice, so drums_005 and vocals_005 still line up.
     """
     if not slices:
         raise ValueError("no slices to export")
@@ -189,23 +196,34 @@ def export_slices(
     zip_path = out_dir or project_dir / "exports" / f"slices-{stamp}-{new_id()[:4]}.zip"
     zip_path.parent.mkdir(parents=True, exist_ok=True)
     width = max(3, len(str(len(ordered))))
-    total, done = len(tracks) * len(ordered), 0
+    total, done, written, skipped = len(tracks) * len(ordered), 0, 0, 0
     with _sink(out_dir, zip_path) as zf:
         for t_i, track in enumerate(tracks, 1):
             src = project_dir / track["file"]
             y_full, sr = audio.read(src)
             label = safe_name(track["name"])
             drums = analysis.is_drum_track(track["name"])
+            floor = float(np.abs(y_full).max(initial=0.0)) * 10 ** (SILENT_DB / 20)
             for i, s in enumerate(ordered, 1):
                 a, b = int(s["start"] * sr), int(s["end"] * sr)
                 raw = y_full[:, a:b]
+                done += 1
+                if skip_silent and (not raw.size or float(np.abs(raw).max()) <= floor):
+                    skipped += 1
+                    continue
                 key = analysis.key_of(audio.to_mono(raw), sr, drums) if keys and raw.shape[1] else None
                 seg = audio.apply_fades(raw, sr, fade_in_ms, fade_out_ms)
                 if norm:
                     seg = audio.normalize(seg)
                 name = export_name(f"{label}_{i:0{width}d}", bpm, s["end"] - s["start"], key)
                 zf.writestr(f"{label}/{name}.wav", audio.wav_bytes24(seg, sr))
-                done += 1
+                written += 1
                 if progress and (done % 10 == 0 or done == total):
                     progress(done / total, f"Track {t_i}/{len(tracks)} ({track['name']}) · slice {i}/{len(ordered)}")
-    return zip_path
+    if not written:
+        if out_dir is None:
+            zip_path.unlink(missing_ok=True)
+        elif out_dir.is_dir() and not any(out_dir.iterdir()):
+            out_dir.rmdir()
+        raise ValueError(f"all {skipped} slices are silent on the selected track(s): nothing to export")
+    return zip_path, written, skipped

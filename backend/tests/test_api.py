@@ -384,3 +384,36 @@ def test_export_keyed_samples_transposed_to_c(client, tmp_path):
     pads = client.post(f"/api/projects/{pid}/samples/export", json={"from_pads": True, "to_c": "repitched"}).json()
     assert pads["transposed"] == 1
     assert [p.name for p in (Path(pads["path"]) / "In C (repitched)").iterdir()] == ["A01_bit0_C3.wav"]
+
+
+def test_silent_chops_are_not_exported(client):
+    # Drums all through; vocals only from bar 3 (a beat intro before them), with faint bleed.
+    drums, _ = synth.drum_loop(bars=4)
+    n = drums.size
+    vocals = np.zeros(n, np.float32)
+    half = n // 2
+    vocals[half:] = 0.3 * np.sin(2 * np.pi * 330 * np.arange(n - half) / SR)  # a held note
+    vocals[:half] += np.random.default_rng(0).standard_normal(half).astype(np.float32) * 1e-4  # ~-70 dB hiss
+    pid = new_project_with_drums(client, drums)
+    client.post(f"/api/projects/{pid}/tracks", files={"file": ("Vocals.wav", wav(vocals), "audio/wav")})
+    dur = n / SR
+    grid = [{"id": f"s{i}", "start": i * dur / 8, "end": (i + 1) * dur / 8} for i in range(8)]  # chop to grid
+    client.put(f"/api/projects/{pid}/slices", json={"slices": grid})
+
+    j = wait(client, client.post(f"/api/projects/{pid}/slices/export",
+                                 json={"tracks": ["drums", "vocals"], "key_names": False}).json())
+    assert j["status"] == "done", j["error"]
+    assert (j["result"]["count"], j["result"]["silent"]) == (12, 4)
+    names = sorted(zipfile.ZipFile(io.BytesIO(client.get(j["result"]["url"]).content)).namelist())
+    assert len([x for x in names if x.startswith("drums/")]) == 8
+    # Vocal chops keep their slice numbers, so they line up with the drum chops.
+    assert [x.split("/")[1][:10] for x in names if x.startswith("vocals/")] == \
+        ["vocals_00" + str(i) for i in range(5, 9)]
+
+    j = wait(client, client.post(f"/api/projects/{pid}/slices/export",
+                                 json={"tracks": ["vocals"], "skip_silent": False, "key_names": False}).json())
+    assert (j["result"]["count"], j["result"]["silent"]) == (8, 0)
+
+    j = wait(client, client.post(f"/api/projects/{pid}/slices/export",
+                                 json={"tracks": ["vocals"], "slice_ids": ["s0", "s1"]}).json())
+    assert j["status"] == "error" and "silent" in j["error"]

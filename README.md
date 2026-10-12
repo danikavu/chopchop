@@ -191,6 +191,10 @@ lighter engine without PyTorch. You can then import stems you already have (e.g.
      - All of these are undoable.
    - **Export** writes one folder per selected track. It runs in the background with a
      progress bar.
+   - **Skip silent chops** (on by default) leaves out a chop on any track where it is
+     muted or nearly so: peak more than 40 dB below that track's loudest moment. An
+     example is a vocal stem during a beat intro. Numbers stay in step, so `drums_005`
+     and `vocals_005` are still the same moment.
    - **Export to** sets where exports go (see [Export folder](#export-folder)).
 3. **Kits & bits** tab: **Build drum kit** on the drum stem (optionally loading it onto the
    pads), or **Extract sound bits**

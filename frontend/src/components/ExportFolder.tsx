@@ -64,7 +64,8 @@ export function ExportFolder() {
   )
 }
 
-const inC = (r: ExportResult) => (r.transposed ? ` + ${r.transposed} in C` : '')
+const inC = (r: ExportResult) =>
+  (r.transposed ? ` + ${r.transposed} in C` : '') + (r.silent ? ` (${r.silent} silent skipped)` : '')
 
 /** "12 files → <folder> [Show folder]" or "→ download zip". */
 export function ExportResultLine({ result, noun }: { result: ExportResult; noun: string }) {

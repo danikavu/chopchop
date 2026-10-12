@@ -110,6 +110,7 @@ export interface ExportResult {
   folder?: boolean
   count: number
   transposed?: number  // extra copies in C (see ToC)
+  silent?: number  // slices left out because they were silent on a track
 
 }
 
