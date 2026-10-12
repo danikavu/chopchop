@@ -14,8 +14,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 
+def env(name: str) -> str | None:
+    """CHOPCHOP_<name> from the environment (the old CHOPPER_<name> still works)."""
+    return os.environ.get(f"CHOPCHOP_{name}") or os.environ.get(f"CHOPPER_{name}")
+
+
 def data_dir() -> Path:
-    root = Path(os.environ.get("CHOPPER_DATA", Path.cwd() / "data")).expanduser()
+    root = Path(env("DATA") or Path.cwd() / "data").expanduser()
     root.mkdir(parents=True, exist_ok=True)
     return root
 

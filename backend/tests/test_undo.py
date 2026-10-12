@@ -6,9 +6,9 @@ import pytest
 import soundfile as sf
 from fastapi.testclient import TestClient
 
-from chopper import store as store_module
-from chopper.app import create_app
-from chopper.store import Store
+from chopchop import store as store_module
+from chopchop.app import create_app
+from chopchop.store import Store
 
 from . import synth
 from .synth import SR
@@ -50,12 +50,12 @@ def test_undo_redo_slices_with_labels_and_headers(env):
     b = [{"id": "a", "start": 0.0, "end": 0.25}, {"id": "b", "start": 0.25, "end": 0.5}]
     client.put(f"/api/projects/{pid}/slices", json={"slices": a, "label": "Draw slice"})
     r = client.put(f"/api/projects/{pid}/slices", json={"slices": b, "label": "Split slice"})
-    assert unquote(r.headers["X-Chopper-Undo"]) == "Split slice"
+    assert unquote(r.headers["X-ChopChop-Undo"]) == "Split slice"
 
     r = client.post(f"/api/projects/{pid}/undo")
     assert r.json()["undone"] == "Split slice"
     assert [s["id"] for s in get(client, pid)["slices"]] == ["a"]
-    assert unquote(r.headers["X-Chopper-Redo"]) == "Split slice"
+    assert unquote(r.headers["X-ChopChop-Redo"]) == "Split slice"
 
     client.post(f"/api/projects/{pid}/redo")
     assert [s["id"] for s in get(client, pid)["slices"]] == ["a", "b"]

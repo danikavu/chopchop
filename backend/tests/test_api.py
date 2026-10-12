@@ -10,8 +10,8 @@ import pytest
 import soundfile as sf
 from fastapi.testclient import TestClient
 
-from chopper.app import create_app
-from chopper.store import Store
+from chopchop.app import create_app
+from chopchop.store import Store
 
 from . import synth
 from .synth import SR
@@ -178,7 +178,7 @@ def test_ui_served_with_js_mime_even_if_os_registry_is_wrong(tmp_path, monkeypat
     # registry, and browsers refuse module scripts served as text/plain (blank page).
     import mimetypes
 
-    import chopper.app as app_module
+    import chopchop.app as app_module
 
     dist = tmp_path / "dist"
     (dist / "assets").mkdir(parents=True)
@@ -347,7 +347,7 @@ def test_project_exports_go_into_the_export_folder(client, tmp_path):
 def test_export_keyed_samples_transposed_to_c(client, tmp_path):
     import librosa
 
-    from chopper import transpose
+    from chopchop import transpose
 
     # Three pitched sounds (E3, A3, C4) and one with no key.
     y = synth.place([(0.0, synth.tone(52)), (1.0, synth.tone(57)), (2.0, synth.tone(60)), (3.0, synth.tone(57))], 4.0)

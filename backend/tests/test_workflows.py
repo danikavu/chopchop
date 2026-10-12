@@ -7,9 +7,9 @@ import pytest
 import soundfile as sf
 from fastapi.testclient import TestClient
 
-from chopper import separation, workflows
-from chopper.app import create_app
-from chopper.store import Store
+from chopchop import separation, workflows
+from chopchop.app import create_app
+from chopchop.store import Store
 
 from . import synth
 from .synth import SR
@@ -41,7 +41,7 @@ def fake_tool(src, out, tool, progress=None):
 
 @pytest.fixture
 def env(tmp_path, monkeypatch):
-    monkeypatch.setenv("CHOPPER_DATA", str(tmp_path / "data"))
+    monkeypatch.setenv("CHOPCHOP_DATA", str(tmp_path / "data"))
     monkeypatch.setattr(separation, "status", lambda: {"available": True, "reason": None})
     monkeypatch.setattr(separation, "separate", fake_separate)
     monkeypatch.setattr(separation, "run_tool", fake_tool)
@@ -94,7 +94,7 @@ def test_drum_kit_per_song(env):
         and any(n.startswith("A09_hihat") for n in kit)
     assert not any("bpm" in n for n in kit)  # one-shots never carry a BPM
     assert not (batch / "01 Song 1" / "stems").exists()  # this preset exports only the kit
-    summary = json.loads((batch / "chopper-batch.json").read_text())
+    summary = json.loads((batch / "chopchop-batch.json").read_text())
     assert summary["workflow"]["name"] == "Drum kit per song" and len(summary["songs"]) == 3
     # Songs stay as projects to tweak later.
     assert {p["name"] for p in client.get("/api/projects").json()} == {"01 Song 1", "02 Song 2"}
@@ -211,8 +211,8 @@ def test_earlier_runs_are_found_on_disk(env):
     assert [b["id"] for b in client.get("/api/batches", params={"scan": str(out)}).json()] == [j["id"]]
 
     (out / "junk").mkdir()
-    (out / "junk" / "chopper-batch.json").write_text("{not json")
-    # A new session (server restart): the run comes back from its chopper-batch.json, when
+    (out / "junk" / "chopchop-batch.json").write_text("{not json")
+    # A new session (server restart): the run comes back from its chopchop-batch.json, when
     # the batch page looks at the output folder or at the run folder itself.
     fresh = TestClient(create_app(Store(tmp / "data")))
     assert fresh.get("/api/batches").json() == []  # not in a folder ChopChop knows about
@@ -240,3 +240,25 @@ def test_earlier_runs_are_found_on_disk(env):
     assert [Path(b["detail"]["output"]) for b in runs] == [Path(j2["result"]["output"]).resolve()]
     assert again.delete("/api/batches").json() == {"removed": 1}
     assert again.get("/api/batches").json() == []
+
+
+def test_runs_from_before_the_rename_are_still_listed(env):
+    client, album, tmp = env
+    out = tmp / "Old"
+    j = run(client, input_dir=str(album), files=["01 Song 1.wav"], output_dir=str(out), workflow=preset("All stems"))
+    run_dir = Path(j["result"]["output"])
+    assert (run_dir / "chopchop-batch.json").is_file()
+    (run_dir / "chopchop-batch.json").rename(run_dir / "chopper-batch.json")  # as an older version wrote it
+    fresh = TestClient(create_app(Store(tmp / "data")))
+    runs = fresh.get("/api/batches", params={"scan": str(out)}).json()
+    assert [r["detail"]["output"] for r in runs] == [str(run_dir.resolve())]
+
+
+def test_old_environment_names_still_work(tmp_path, monkeypatch):
+    from chopchop.store import data_dir
+
+    monkeypatch.delenv("CHOPCHOP_DATA")
+    monkeypatch.setenv("CHOPPER_DATA", str(tmp_path / "old"))
+    assert data_dir() == tmp_path / "old"
+    monkeypatch.setenv("CHOPCHOP_DATA", str(tmp_path / "new"))  # the new name wins
+    assert data_dir() == tmp_path / "new"

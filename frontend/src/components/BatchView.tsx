@@ -231,7 +231,7 @@ export function BatchView({ meta, onOpenProject }: Props) {
             </div>
             <p className="tip">
               Each run gets its own folder inside, one subfolder per song (<code>stems/</code>, <code>kit/</code>,{' '}
-              <code>samples/</code>) and a <code>chopper-batch.json</code> summary.
+              <code>samples/</code>) and a <code>chopchop-batch.json</code> summary.
               {' '}The folder is remembered and also used for slice / kit exports from a project.
               {!output && ' Empty = ChopChop’s data folder.'}
             </p>
@@ -302,7 +302,7 @@ function BatchCard({ b, onOpenProject, onRemove }: {
         <b>{b.detail?.workflow}</b>
         <span className={`status ${b.status}`}>{b.status}</span>
         {b.detail?.from_disk && (
-          <span className="muted small" title="Read from this run's chopper-batch.json">
+          <span className="muted small" title="Read from this run's chopchop-batch.json">
             {new Date(b.created_at * 1000).toLocaleString()}
           </span>
         )}

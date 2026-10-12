@@ -4,7 +4,7 @@ import types
 import pytest
 import torch
 
-from chopper import separation
+from chopchop import separation
 
 GB = 1024 ** 3
 
@@ -12,13 +12,13 @@ GB = 1024 ** 3
 @pytest.fixture
 def cuda(monkeypatch, tmp_path):
     """Pretend there's a 6 GB NVIDIA card, with a fresh data folder."""
-    monkeypatch.setenv("CHOPPER_DATA", str(tmp_path))
+    monkeypatch.setenv("CHOPCHOP_DATA", str(tmp_path))
     monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
     monkeypatch.setattr(torch.cuda, "mem_get_info", lambda *a: (5.3 * GB, 6 * GB))
     monkeypatch.setattr(torch.cuda, "empty_cache", lambda: None)
     monkeypatch.setattr(torch.cuda, "get_device_name", lambda *a: "Test RTX")
-    monkeypatch.delenv("CHOPPER_GPU_BATCH", raising=False)
-    monkeypatch.delenv("CHOPPER_FP16", raising=False)
+    monkeypatch.delenv("CHOPCHOP_GPU_BATCH", raising=False)
+    monkeypatch.delenv("CHOPCHOP_FP16", raising=False)
     return tmp_path
 
 
@@ -33,8 +33,8 @@ def test_saved_settings_per_architecture_and_overrides(cuda, monkeypatch):
     assert separation.gpu_tuning("vocals_mel_band_roformer.ckpt")["label"] == "batch 3 · fp16"
     assert separation.gpu_tuning("Kim_Vocal_2.onnx")["batch"] == 8
     assert separation.gpu_tuning("htdemucs_ft.yaml")["batch"] == 1  # Demucs: never tuned
-    monkeypatch.setenv("CHOPPER_GPU_BATCH", "2")
-    monkeypatch.setenv("CHOPPER_FP16", "0")
+    monkeypatch.setenv("CHOPCHOP_GPU_BATCH", "2")
+    monkeypatch.setenv("CHOPCHOP_FP16", "0")
     t = separation.gpu_tuning("vocals_mel_band_roformer.ckpt")
     assert (t["batch"], t["fp16"]) == (2, False)
 
@@ -49,7 +49,7 @@ def test_cpu_and_apple_untouched(monkeypatch):
 
 
 class FakeSeparator:
-    """Records what Chopper passes; runs out of memory above `limit` on the GPU."""
+    """Records what ChopChop passes; runs out of memory above `limit` on the GPU."""
 
     created: list = []
     limit = 99
@@ -112,12 +112,12 @@ def test_out_of_memory_halves_then_falls_back_loudly(cuda, fake, tmp_path):
 
 
 def _bench(tmp_path, capsys, monkeypatch, cost):
-    """Run `chopper benchmark` on a fake CUDA card where cost(batch, fp16) is the run time."""
+    """Run `chopchop benchmark` on a fake CUDA card where cost(batch, fp16) is the run time."""
     import time as _time
 
     import soundfile as sf
 
-    from chopper import cli
+    from chopchop import cli
 
     from . import synth
 

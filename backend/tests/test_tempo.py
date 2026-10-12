@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from chopper import tempo
+from chopchop import tempo
 
 from . import synth
 from .synth import SR

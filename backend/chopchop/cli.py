@@ -1,9 +1,9 @@
-"""Command line: `chopper` (or `python -m chopper`).
+"""Command line: `chopchop` (or `python -m chopchop`).
 
-    chopper                         start the app (same as `chopper serve`)
-    chopper batch FOLDER -w NAME    run a workflow over every track in a folder
-    chopper workflows               list presets and saved workflows
-    chopper workflow NAME           print a workflow as JSON (edit it, use with --workflow-file)
+    chopchop                        start the app (same as `chopchop serve`)
+    chopchop batch FOLDER -w NAME   run a workflow over every track in a folder
+    chopchop workflows              list presets and saved workflows
+    chopchop workflow NAME          print a workflow as JSON (edit it, use with --workflow-file)
 
 Exit codes for `batch`: 0 every song done, 1 some songs failed, 2 bad usage,
 130 cancelled with Ctrl+C.
@@ -64,14 +64,14 @@ def cmd_workflows(args) -> int:
     width = max(len(n) for n, _, _ in items)
     for n, kind, w in items:
         print(f"  {n:<{width}}  [{kind}]  {w.description}")
-    print('\nUse one with: chopper batch FOLDER --workflow "NAME"   (show it as JSON: chopper workflow "NAME")')
+    print('\nUse one with: chopchop batch FOLDER --workflow "NAME"   (show it as JSON: chopchop workflow "NAME")')
     return EXIT_OK
 
 
 def cmd_workflow(args) -> int:
     wf = _find_workflow(args.name)
     if wf is None:
-        return _usage(f"no workflow called {args.name!r}; see `chopper workflows`")
+        return _usage(f"no workflow called {args.name!r}; see `chopchop workflows`")
     print(json.dumps(wf.model_dump(), indent=2))
     return EXIT_OK
 
@@ -229,11 +229,11 @@ def _song_line(s: dict) -> str:
 def cmd_batch(args) -> int:
     from . import separation, workflows
     from .jobs import Cancelled
-    from .service import Chopper
+    from .service import ChopChop
     from .store import Store
 
     if args.data:
-        os.environ["CHOPPER_DATA"] = str(Path(args.data).expanduser())
+        os.environ["CHOPCHOP_DATA"] = str(Path(args.data).expanduser())
     out = sys.stderr if args.json else sys.stdout  # keep stdout clean for --json
 
     if args.workflow_file:
@@ -247,7 +247,7 @@ def cmd_batch(args) -> int:
             names = ", ".join(f'"{n}"' for n, _, _ in _all_workflows())
             return _usage(f"no workflow called {args.workflow!r}. Available: {names}")
     else:
-        return _usage('choose a workflow with --workflow "NAME" or --workflow-file FILE (list them: chopper workflows)')
+        return _usage('choose a workflow with --workflow "NAME" or --workflow-file FILE (list them: chopchop workflows)')
 
     try:
         wf = _apply_overrides(wf, args)
@@ -296,7 +296,7 @@ def cmd_batch(args) -> int:
     print("", file=out)
     started = time.time()
     try:
-        result = workflows.run_batch(Chopper(Store()), files, wf, out_root, job,
+        result = workflows.run_batch(ChopChop(Store()), files, wf, out_root, job,
                                      on_song=lambda s: term.line(_song_line(s)))
     except Cancelled:
         songs = (job.detail or {}).get("songs", [])
@@ -334,7 +334,7 @@ def cmd_benchmark(args) -> int:
     from .store import data_dir
 
     if args.data:
-        os.environ["CHOPPER_DATA"] = str(Path(args.data).expanduser())
+        os.environ["CHOPCHOP_DATA"] = str(Path(args.data).expanduser())
     st = separation.status()
     if not st["available"]:
         return _usage(f"stem separation unavailable: {st['reason']}")
@@ -369,7 +369,7 @@ def cmd_benchmark(args) -> int:
     fp16_ok = cuda and torch.cuda.get_device_capability(0)[0] >= 7
 
     def timed(model: str, batch: int, fp16: bool) -> tuple[float, dict]:
-        os.environ["CHOPPER_GPU_BATCH"], os.environ["CHOPPER_FP16"] = str(batch), "1" if fp16 else "0"
+        os.environ["CHOPCHOP_GPU_BATCH"], os.environ["CHOPCHOP_FP16"] = str(batch), "1" if fp16 else "0"
         out = work / "out"
         shutil.rmtree(out, ignore_errors=True)
         t = time.time()
@@ -378,7 +378,7 @@ def cmd_benchmark(args) -> int:
         return time.time() - t, dict(separation.LAST_RUN)
 
     results: dict[str, list] = {}
-    saved_env = {k: os.environ.get(k) for k in ("CHOPPER_GPU_BATCH", "CHOPPER_FP16")}
+    saved_env = {k: os.environ.get(k) for k in ("CHOPCHOP_GPU_BATCH", "CHOPCHOP_FP16")}
     try:
         for name in names:
             model = BENCH_MODELS[name]
@@ -452,7 +452,7 @@ def cmd_benchmark(args) -> int:
 # ---------- parser ----------
 
 def _usage(msg: str) -> int:
-    print(f"chopper: {msg}", file=sys.stderr)
+    print(f"chopchop: {msg}", file=sys.stderr)
     return EXIT_USAGE
 
 
@@ -463,15 +463,14 @@ def _bool_flag(p, name: str, dest: str, help_on: str, help_off: str) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    name = Path(sys.argv[0]).stem if sys.argv and Path(sys.argv[0]).stem in ("chopper", "chopchop") else "chopchop"
-    p = argparse.ArgumentParser(prog=name, description="ChopChop: slice tracks, build drum kits and stems.",
+    p = argparse.ArgumentParser(prog="chopchop", description="ChopChop: slice tracks, build drum kits and stems.",
                                 formatter_class=argparse.RawDescriptionHelpFormatter,
                                 epilog='Examples:\n'
-                                       '  chopper                                    start the app\n'
-                                       '  chopper workflows                          list workflows\n'
-                                       '  chopper batch ~/Music/Album -w "Drum kit per song"\n'
-                                       '  chopper batch ~/Music/Album -w "All stems" --stems vocals,bass -o ~/Stems\n'
-                                       '  chopper batch ~/Music/Album -w "Drum kit per song" --kit-size 32 --dry-run')
+                                       '  chopchop                                   start the app\n'
+                                       '  chopchop workflows                         list workflows\n'
+                                       '  chopchop batch ~/Music/Album -w "Drum kit per song"\n'
+                                       '  chopchop batch ~/Music/Album -w "All stems" --stems vocals,bass -o ~/Stems\n'
+                                       '  chopchop batch ~/Music/Album -w "Drum kit per song" --kit-size 32 --dry-run')
     sub = p.add_subparsers(dest="cmd")
 
     s = sub.add_parser("serve", help="start the app (the default)")
@@ -488,7 +487,7 @@ def build_parser() -> argparse.ArgumentParser:
     b.add_argument("folder", help="folder with the tracks")
     w = b.add_argument_group("workflow")
     w.add_argument("-w", "--workflow", help='preset or saved workflow, e.g. "Drum kit per song"')
-    w.add_argument("--workflow-file", metavar="FILE", help="workflow JSON (see `chopper workflow NAME`)")
+    w.add_argument("--workflow-file", metavar="FILE", help="workflow JSON (see `chopchop workflow NAME`)")
     w.add_argument("--model", help="separation model id, e.g. htdemucs_ft.yaml, two_stage_6s")
     w.add_argument("--stems", metavar="LIST", help='stems to keep, e.g. "vocals,bass" or "all"')
     _bool_flag(w, "rest", "rest", "mix the stems not kept into one extra track", "drop the stems not kept")
@@ -506,7 +505,7 @@ def build_parser() -> argparse.ArgumentParser:
     w.add_argument("--bits", metavar="LIST", help='cut sound bits from these stems, e.g. "vocals,bass"')
     w.add_argument("--bits-mode", choices=["chops", "phrases"])
     o = b.add_argument_group("input / output")
-    o.add_argument("-o", "--output", metavar="DIR", help="output folder (default: Chopper's data folder)")
+    o.add_argument("-o", "--output", metavar="DIR", help="output folder (default: ChopChop's data folder)")
     o.add_argument("-r", "--recursive", action="store_true", help="include subfolders")
     o.add_argument("--only", action="append", metavar="PATTERN", help='only files matching, e.g. "01*" (repeatable)')
     o.add_argument("--export-stems", metavar="WHICH", help='"all", "kept", "none" or a list like "vocals,bass"')
@@ -519,7 +518,7 @@ def build_parser() -> argparse.ArgumentParser:
                         "(repitched = resampled, warped = same length)")
     _bool_flag(o, "keep-projects", "keep_projects", "keep each song as a ChopChop project",
                "delete each song's project after export")
-    o.add_argument("--data", metavar="DIR", help="ChopChop data folder (default: CHOPPER_DATA or ./data)")
+    o.add_argument("--data", metavar="DIR", help="ChopChop data folder (default: CHOPCHOP_DATA or ./data)")
     r = b.add_argument_group("run")
     r.add_argument("-n", "--dry-run", action="store_true", help="show the plan and tracks, process nothing")
     r.add_argument("--json", action="store_true", help="print the result as JSON on stdout (progress on stderr)")

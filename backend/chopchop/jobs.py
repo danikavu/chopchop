@@ -49,7 +49,7 @@ class Job:
 
 class JobRunner:
     def __init__(self, workers: int = 2):
-        self._pool = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="chopper-job")
+        self._pool = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="chopchop-job")
         self._jobs: dict[str, Job] = {}
         self._lock = threading.Lock()
 

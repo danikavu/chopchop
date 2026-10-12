@@ -1,4 +1,4 @@
-"""`python -m chopper` / `chopper`: see chopper.cli."""
+"""`python -m chopchop` / `chopchop`: see chopchop.cli."""
 
 import sys
 

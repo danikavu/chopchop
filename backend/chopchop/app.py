@@ -21,7 +21,7 @@ from pydantic import BaseModel, Field
 
 from . import analysis, audio, kits, portions, separation, settings, slicing, tempo, transpose, workflows
 from .jobs import Job, JobRunner
-from .service import Chopper
+from .service import ChopChop
 from .store import PAD_SLOTS, ProjectNotFound, Store, find_sample, find_track, new_id, safe_name
 
 FRONTEND_DIST = Path(__file__).resolve().parents[2] / "frontend" / "dist"
@@ -155,7 +155,7 @@ class RevealReq(BaseModel):
 
 def create_app(store: Store | None = None) -> FastAPI:
     store = store or Store()
-    svc = Chopper(store)
+    svc = ChopChop(store)
     jobs = JobRunner()
     app = FastAPI(title="ChopChop")
 
@@ -167,8 +167,8 @@ def create_app(store: Store | None = None) -> FastAPI:
         m = re.match(r"/api/projects/([a-f0-9]{10})(/|$)", request.url.path)
         if m and response.status_code < 500:
             h = store.history(m.group(1))
-            response.headers["X-Chopper-Undo"] = quote(h["undo"] or "")
-            response.headers["X-Chopper-Redo"] = quote(h["redo"] or "")
+            response.headers["X-ChopChop-Undo"] = quote(h["undo"] or "")
+            response.headers["X-ChopChop-Redo"] = quote(h["redo"] or "")
         return response
 
     @app.exception_handler(ProjectNotFound)
@@ -507,7 +507,7 @@ def create_app(store: Store | None = None) -> FastAPI:
             return False
 
     def disk_runs(scan: list[str]) -> list[dict]:
-        """Runs found on disk (chopper-batch.json) in the export / batch folders and the
+        """Runs found on disk (chopchop-batch.json) in the export / batch folders and the
         folders the batch page is looking at, minus hidden ones and this session's own."""
         folders = [Path(p) for p in scan if p] + [workflows.default_output()]
         if settings.export_dir():

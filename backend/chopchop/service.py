@@ -23,7 +23,7 @@ def _quiet(_p: float, _m: str) -> None:
     pass
 
 
-class Chopper:
+class ChopChop:
     def __init__(self, store: Store):
         self.store = store
 

@@ -43,7 +43,7 @@ export function ExportFolder() {
   return (
     <div className="export-folder">
       <span className="muted">Export to</span>
-      <span className="path" title={dir ?? undefined}>{dir || 'zip download'}</span>
+      <span className="path" title={dir ?? undefined}>{dir ? ltr(dir) : 'zip download'}</span>
       <div className="row">
         <button onClick={() => setPicking(true)}>{dir ? 'Change…' : 'Choose folder…'}</button>
         {dir && <button onClick={() => void set(null)} title="Export as a zip download instead">Reset</button>}
@@ -64,6 +64,10 @@ export function ExportFolder() {
   )
 }
 
+// Paths are cut from the left (direction: rtl) so their end stays visible; the marks
+// keep "/" and "~" where they belong instead of the bidi rules moving them to the end.
+const ltr = (path: string) => `\u200e${path}\u200e`
+
 const inC = (r: ExportResult) =>
   (r.transposed ? ` + ${r.transposed} in C` : '') + (r.silent ? ` (${r.silent} silent skipped)` : '')
 
@@ -72,7 +76,7 @@ export function ExportResultLine({ result, noun }: { result: ExportResult; noun:
   if (result.folder || !result.url) {
     return (
       <div className="result">
-        {result.count} {noun}{inC(result)} saved to <span className="path" title={result.path}>{result.path}</span>{' '}
+        {result.count} {noun}{inC(result)} saved to <span className="path" title={result.path}>{ltr(result.path)}</span>{' '}
         <button className="link" onClick={() => void api.reveal(result.path)}>Show folder</button>
       </div>
     )
@@ -80,7 +84,7 @@ export function ExportResultLine({ result, noun }: { result: ExportResult; noun:
   return (
     <div className="result">
       {result.count} {noun}{inC(result)} → <a href={result.url}>download zip</a>
-      <div className="path" title={result.path}>{result.path}</div>
+      <div className="path" title={result.path}>{ltr(result.path)}</div>
     </div>
   )
 }

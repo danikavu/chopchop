@@ -4,7 +4,7 @@ so it runs with any Python 3.10+ before the virtualenv exists.
 
     python scripts/run.py install [--gpu auto|cuda|directml|cpu] [--no-separation]
     python scripts/run.py build                       # build the UI into frontend/dist
-    python scripts/run.py run [chopper args…]         # build the UI and start ChopChop
+    python scripts/run.py run [chopchop args…]         # build the UI and start ChopChop
     python scripts/run.py dev                         # API (auto-reload) + Vite hot reload
     python scripts/run.py test                        # pytest + TypeScript typecheck
     python scripts/run.py batch FOLDER -w "Drum kit per song" [options]   # see: batch --help
@@ -146,7 +146,7 @@ def install(args: argparse.Namespace) -> None:
             install_cuda_torch(py)
         extra = {"cuda": "separation-cuda", "directml": "separation-directml", "cpu": "separation"}[gpu]
         sh(py, "-m", "pip", "install", "-e", f".[{extra},dev]")
-        device = venv_eval("from chopper.separation import device_info as d; i = d(); "
+        device = venv_eval("from chopchop.separation import device_info as d; i = d(); "
                            "print(i['name'] + ('  — ' + i['hint'] if i['hint'] else ''))")
         print(f"\nStem separation will run on: {device or 'unknown (check the log above)'}")
     sh(npm(), "install", cwd=FRONTEND)
@@ -162,7 +162,7 @@ def run(args: argparse.Namespace) -> None:
     py = require_venv()
     build()
     ffmpeg_hint()
-    sh(py, "-m", "chopper", *args.extra)
+    sh(py, "-m", "chopchop", *args.extra)
 
 
 def dev(_args: argparse.Namespace) -> None:
@@ -170,7 +170,7 @@ def dev(_args: argparse.Namespace) -> None:
     py = require_venv()
     procs = [
         subprocess.Popen(
-            [str(py), "-m", "uvicorn", "--factory", "chopper.app:create_app",
+            [str(py), "-m", "uvicorn", "--factory", "chopchop.app:create_app",
              "--port", "8765", "--reload", "--reload-dir", "backend"],
             cwd=ROOT,
         ),
@@ -193,10 +193,10 @@ def dev(_args: argparse.Namespace) -> None:
                 p.kill()
 
 
-def chopper_cli(args: argparse.Namespace) -> None:
-    """Pass straight through to the chopper command line (batch, workflows, workflow)."""
+def chopchop_cli(args: argparse.Namespace) -> None:
+    """Pass straight through to the chopchop command line (batch, workflows, workflow)."""
     py = require_venv()
-    code = subprocess.call([str(py), "-m", "chopper", args.cmd, *args.extra], cwd=ROOT)
+    code = subprocess.call([str(py), "-m", "chopchop", args.cmd, *args.extra], cwd=ROOT)
     sys.exit(code)
 
 
@@ -223,10 +223,10 @@ def main() -> None:
     for name, text in (("batch", "run a workflow over a folder, e.g. batch ~/Music/Album -w \"Drum kit per song\""),
                        ("workflows", "list batch workflows"), ("workflow", "print a workflow as JSON"),
                        ("benchmark", "time separation models / GPU settings on this machine")):
-        sub.add_parser(name, help=text, add_help=False).set_defaults(fn=chopper_cli)
-    # Unknown flags are forwarded to chopper by `run`; other commands reject them.
+        sub.add_parser(name, help=text, add_help=False).set_defaults(fn=chopchop_cli)
+    # Unknown flags are forwarded to chopchop by `run`; other commands reject them.
     args, extra = parser.parse_known_args()
-    if extra and args.fn not in (run, chopper_cli):
+    if extra and args.fn not in (run, chopchop_cli):
         parser.error(f"unrecognized arguments: {' '.join(extra)}")
     args.extra = extra
     args.fn(args)

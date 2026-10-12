@@ -1,4 +1,9 @@
-# ChopChop
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="frontend/src/assets/chopchop-logo.png">
+    <img src="frontend/src/assets/chopchop-logo-dark.png" alt="ChopChop" width="432">
+  </picture>
+</p>
 
 A local app for chopping music. Load a track, and ChopChop splits it into stems with UVR
 models. From there you can:
@@ -47,7 +52,7 @@ ChopChop uses.
   instead of guessing:
 
   ```sh
-  chopper benchmark "path/to/a typical song.wav"     # or: python scripts/run.py benchmark …
+  chopchop benchmark "path/to/a typical song.wav"     # or: python scripts/run.py benchmark …
   ```
 
   - It times each model on a 30-second clip with each setting: batch 1 or a size based
@@ -55,7 +60,7 @@ ChopChop uses.
   - It prints the times, and saves a setting only if it was clearly faster (≥ 7%)
     without falling back to CPU. ChopChop then uses it for those models.
   - `--no-save` only reports.
-  - Overrides, set before starting ChopChop: `CHOPPER_GPU_BATCH=N` and `CHOPPER_FP16=0|1`.
+  - Overrides, set before starting ChopChop: `CHOPCHOP_GPU_BATCH=N` and `CHOPCHOP_FP16=0|1`.
   - **Demucs isn't tunable.** It processes one ~7.8 s segment at a time, has no batch
     setting, and doesn't use fp16, so it uses about 2 GB of VRAM whatever the card. That's
     expected, not a sign the GPU is idle.
@@ -106,7 +111,8 @@ On Windows, use `py scripts\run.py …` if `python` isn't on your PATH. On macOS
 `make install` / `make run` are shortcuts for the same commands.
 
 The first separation with each model downloads it into `data/models/`. Projects are stored
-in `data/projects/`. Set `CHOPPER_DATA=/some/path` to keep them somewhere else.
+in `data/projects/`. Set `CHOPCHOP_DATA=/some/path` to keep them somewhere else (the
+older `CHOPPER_*` variable names still work).
 
 If you don't need separation, `python scripts/run.py install --no-separation` installs a much
 lighter engine without PyTorch. You can then import stems you already have (e.g. from the UVR GUI) with
@@ -290,14 +296,14 @@ for example an album → a drum kit per song.
 3. **Output folder:** optional. It starts at the saved [export folder](#export-folder), and
    a folder you pick here becomes the new export folder. With none set, ChopChop's data
    folder is used. Each run makes
-   `<output>/<folder> – <date>/<song>/{stems,kit,samples}/` plus a `chopper-batch.json`
+   `<output>/<folder> – <date>/<song>/{stems,kit,samples}/` plus a `chopchop-batch.json`
    summary.
 
 Songs run one after another, with per-song progress. A file that fails is reported and
 the batch moves on to the next one. **Cancel** stops between steps, and **open** /
 **folder** jump to a song's project or its files.
 
-Earlier runs are read back from their `chopper-batch.json`, so they stay listed after a
+Earlier runs are read back from their `chopchop-batch.json`, so they stay listed after a
 restart. Runs are found in:
 
 - the export folder;
@@ -311,16 +317,16 @@ The CLI's runs are included too. **Remove** / **Clear all** only hide runs from 
 ### Command line
 
 Batches also run from a terminal, with no browser or server needed. Inside the venv the
-command is `chopchop` (or `chopper`, its original name); anywhere, `python scripts/run.py batch …`
+command is `chopchop`; anywhere, `python scripts/run.py batch …`
 does the same.
 
 ```sh
-chopper workflows                                        # list presets + saved workflows
-chopper batch ~/Music/Album -w "Drum kit per song"       # a drum kit per song
-chopper batch ~/Music/Album -w "All stems" --stems vocals,bass -o ~/Stems
-chopper batch ~/Music/Album -w "Drum kit per song" --kit-size 32 --only "0[1-3]*" --dry-run
-chopper workflow "Acapellas" > mine.json                 # export a workflow, edit it…
-chopper batch ~/Music/Album --workflow-file mine.json    # …and run it
+chopchop workflows                                        # list presets + saved workflows
+chopchop batch ~/Music/Album -w "Drum kit per song"       # a drum kit per song
+chopchop batch ~/Music/Album -w "All stems" --stems vocals,bass -o ~/Stems
+chopchop batch ~/Music/Album -w "Drum kit per song" --kit-size 32 --only "0[1-3]*" --dry-run
+chopchop workflow "Acapellas" > mine.json                 # export a workflow, edit it…
+chopchop batch ~/Music/Album --workflow-file mine.json    # …and run it
 ```
 
 - **Overrides:** flags tweak the chosen workflow for that run only:
@@ -333,7 +339,7 @@ chopper batch ~/Music/Album --workflow-file mine.json    # …and run it
     `--keep-projects` / `--no-keep-projects`;
   - input/output: `-o DIR`, `-r` (subfolders), `--only PATTERN`.
 
-  `chopper batch --help` lists them all.
+  `chopchop batch --help` lists them all.
 - **`--dry-run`** prints the plan and the track list without processing anything.
 - **Progress:** a live status line (song, step, model download, GPU progress), then one
   ✓/✗ line per song. `-q` keeps only the per-song lines.
@@ -437,7 +443,7 @@ python scripts/run.py dev    # API with auto-reload on :8765 + Vite hot reload o
 python scripts/run.py test   # pytest (synthetic drums/tones with known answers) + TypeScript typecheck
 ```
 
-- `backend/chopper/`
+- `backend/chopchop/`
   - `app.py`: FastAPI routes
   - `slicing.py`: onsets and slice export
   - `analysis.py`: features, classification, note and key
@@ -451,7 +457,7 @@ python scripts/run.py test   # pytest (synthetic drums/tones with known answers)
 Notes:
 
 - On Apple Silicon, Demucs runs on the GPU through a small shim
-  (`backend/chopper/mps_compat.py`). PyTorch's Metal backend rejects 1-D convolutions
+  (`backend/chopchop/mps_compat.py`). PyTorch's Metal backend rejects 1-D convolutions
   longer than 65536 steps, and Demucs convolves whole ~7.8 s segments, so the shim computes
   those convolutions in chunks. The results are identical: Metal-vs-CPU output differs
   exactly as much as two CPU runs do, because of Demucs' random shifts. If a model still
