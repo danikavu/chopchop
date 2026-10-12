@@ -8,7 +8,7 @@ __pycache__/
 frontend/node_modules/
 frontend/dist/
 
-# Chopper projects, stems, samples, exports and downloaded models
+# ChopChop projects, stems, samples, exports and downloaded models
 data/
 
 .DS_Store

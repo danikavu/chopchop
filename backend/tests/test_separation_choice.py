@@ -7,9 +7,9 @@ import pytest
 import soundfile as sf
 from fastapi.testclient import TestClient
 
-from chopper import separation
-from chopper.app import create_app
-from chopper.store import Store
+from chopchop import separation
+from chopchop.app import create_app
+from chopchop.store import Store
 
 from . import synth
 from .synth import SR

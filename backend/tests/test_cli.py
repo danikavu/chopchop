@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 import soundfile as sf
 
-from chopper import cli, separation
+from chopchop import cli, separation
 
 from . import synth
 from .synth import SR
@@ -16,7 +16,7 @@ from .test_workflows import fake_separate, fake_tool
 
 @pytest.fixture
 def album(tmp_path, monkeypatch):
-    monkeypatch.setenv("CHOPPER_DATA", str(tmp_path / "data"))
+    monkeypatch.setenv("CHOPCHOP_DATA", str(tmp_path / "data"))
     monkeypatch.setattr(separation, "status", lambda: {"available": True, "reason": None})
     monkeypatch.setattr(separation, "separate", fake_separate)
     monkeypatch.setattr(separation, "run_tool", fake_tool)
@@ -37,7 +37,7 @@ def test_batch_drum_kits(album, tmp_path, capsys):
     assert "Workflow: Drum kit per song" in text and "• Split drums on drums" in text
     assert "✓ 01 Song 1 — " in text and "pads" in text and "Finished 2/2 songs" in text
     run = next(out.iterdir())
-    assert sorted(p.name for p in run.iterdir()) == ["01 Song 1", "02 Song 2", "chopper-batch.json"]
+    assert sorted(p.name for p in run.iterdir()) == ["01 Song 1", "02 Song 2", "chopchop-batch.json"]
     assert any(p.name.startswith("A01_kick") for p in (run / "01 Song 1" / "kit").iterdir())
 
 

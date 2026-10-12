@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 import soundfile as sf
 
-from chopper import analysis, kits, slicing
+from chopchop import analysis, kits, slicing
 
 from . import synth
 from .synth import SR

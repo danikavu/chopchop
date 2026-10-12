@@ -2,7 +2,7 @@ import pytest
 import torch
 import torch.nn.functional as F
 
-from chopper import mps_compat
+from chopchop import mps_compat
 
 pytestmark = pytest.mark.skipif(not torch.backends.mps.is_available(), reason="needs Apple MPS")
 

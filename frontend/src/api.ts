@@ -30,8 +30,8 @@ export function onHistory(fn: HistoryListener): () => void {
 }
 
 function readHistory(res: Response) {
-  const undo = res.headers.get('X-Chopper-Undo')
-  const redo = res.headers.get('X-Chopper-Redo')
+  const undo = res.headers.get('X-ChopChop-Undo')
+  const redo = res.headers.get('X-ChopChop-Redo')
   if (undo === null || redo === null) return
   const h = { undo: decodeURIComponent(undo) || null, redo: decodeURIComponent(redo) || null }
   historyListeners.forEach((fn) => fn(h))
@@ -108,7 +108,7 @@ export const api = {
   deleteWorkflow: (name: string) => req<{ saved: Workflow[] }>('DELETE', `/api/workflows/${enc(name)}`),
   startBatch: (body: { input_dir: string; files?: string[]; recursive: boolean; output_dir?: string; workflow: Workflow }) =>
     req<BatchJob>('POST', '/api/batches', body),
-  // scan: extra folders to look in for earlier runs (chopper-batch.json)
+  // scan: extra folders to look in for earlier runs (chopchop-batch.json)
   batches: (scan: string[] = []) => req<BatchJob[]>('GET', `/api/batches${scanQuery(scan)}`),
   removeBatch: (jid: string, scan: string[] = []) => req('DELETE', `/api/batches/${enc(jid)}${scanQuery(scan)}`),
   clearBatches: (scan: string[] = []) => req<{ removed: number }>('DELETE', `/api/batches${scanQuery(scan)}`),

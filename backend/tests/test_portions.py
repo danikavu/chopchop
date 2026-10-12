@@ -5,9 +5,9 @@ import numpy as np
 import soundfile as sf
 from fastapi.testclient import TestClient
 
-from chopper import portions, separation
-from chopper.app import create_app
-from chopper.store import Store
+from chopchop import portions, separation
+from chopchop.app import create_app
+from chopchop.store import Store
 
 SR = 44100
 

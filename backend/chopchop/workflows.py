@@ -6,7 +6,7 @@ A workflow is a chain of optional steps, all driven by the same operations as th
 
 Each song becomes a ChopChop project (kept, or deleted after export) and gets its own
 folder in the output: <output>/<batch>/<song>/{stems,kit,samples}/ plus a summary
-(chopper-batch.json) for the whole batch.
+(chopchop-batch.json) for the whole batch.
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ from pydantic import BaseModel, Field
 
 from . import analysis, audio, kits, separation, transpose
 from .naming import export_name
-from .service import Chopper
+from .service import ChopChop
 from .store import data_dir
 
 AUDIO_EXTS = {".wav", ".flac", ".aif", ".aiff", ".mp3", ".ogg", ".oga", ".opus", ".m4a", ".aac"}
@@ -218,7 +218,7 @@ def unique_dir(path: Path) -> Path:
 Progress = Callable[[float, str], None]
 
 
-def run_song(svc: Chopper, src: Path, wf: Workflow, out_dir: Path, progress: Progress,
+def run_song(svc: ChopChop, src: Path, wf: Workflow, out_dir: Path, progress: Progress,
              check_cancel: Callable[[], None]) -> dict:
     """Run the recipe on one file; returns what was made."""
     steps = ["import"]
@@ -304,7 +304,7 @@ def run_song(svc: Chopper, src: Path, wf: Workflow, out_dir: Path, progress: Pro
             result.pop("project", None)
 
 
-def _kit(svc: Chopper, pid: str, k: KitStep, progress: Progress, warnings: list[str]) -> int:
+def _kit(svc: ChopChop, pid: str, k: KitStep, progress: Progress, warnings: list[str]) -> int:
     names = [t["name"] for t in svc.store.get(pid)["tracks"]]
     parts = [n for n in names if analysis.drum_part(n) and analysis.is_drum_track(n)]
     drums = [n for n in names if analysis.is_drum_track(n) and not analysis.drum_part(n)]
@@ -326,7 +326,7 @@ def _kit(svc: Chopper, pid: str, k: KitStep, progress: Progress, warnings: list[
     return len(saved)
 
 
-def _bits(svc: Chopper, pid: str, b: BitsStep, progress: Progress, warnings: list[str]) -> int:
+def _bits(svc: ChopChop, pid: str, b: BitsStep, progress: Progress, warnings: list[str]) -> int:
     names = {t["name"] for t in svc.store.get(pid)["tracks"]}
     todo = [s for s in b.stems if s in names]
     for s in b.stems:
@@ -343,7 +343,7 @@ def _bits(svc: Chopper, pid: str, b: BitsStep, progress: Progress, warnings: lis
     return count
 
 
-def _export(svc: Chopper, pid: str, wf: Workflow, kept: list[str], out_dir: Path, progress: Progress) -> int:
+def _export(svc: ChopChop, pid: str, wf: Workflow, kept: list[str], out_dir: Path, progress: Progress) -> int:
     e = wf.export
     p = svc.store.get(pid)
     folder = svc.store.path(pid)
@@ -413,7 +413,7 @@ def prepare(input_dir: str | Path, files: list[str] | None = None, recursive: bo
     return found, unique_dir(base / batch_name(folder))
 
 
-def run_batch(svc: Chopper, files: list[Path], wf: Workflow, out_root: Path, job,
+def run_batch(svc: ChopChop, files: list[Path], wf: Workflow, out_root: Path, job,
               on_song: Callable[[dict], None] | None = None) -> dict:
     """Run the workflow over files, one song after another. A failing song is recorded
     and the batch carries on; Cancel stops between steps. on_song(entry) is called as
@@ -453,7 +453,12 @@ def run_batch(svc: Chopper, files: list[Path], wf: Workflow, out_root: Path, job
     return {"output": str(out_root), "done": ok, "failed": len(songs) - ok, "songs": songs}
 
 
-SUMMARY = "chopper-batch.json"
+SUMMARY = "chopchop-batch.json"
+OLD_SUMMARY = "chopper-batch.json"  # runs made before the rename are still listed
+
+
+def summary_file(run_dir: Path) -> Path | None:
+    return next((run_dir / n for n in (SUMMARY, OLD_SUMMARY) if (run_dir / n).is_file()), None)
 
 
 def _write_summary(out_root: Path, wf: Workflow, songs: list[dict], started: float, status: str = "done") -> None:
@@ -469,7 +474,7 @@ def _write_summary(out_root: Path, wf: Workflow, songs: list[dict], started: flo
 
 def find_runs(folders: list[Path]) -> list[dict]:
     """Earlier batch runs on disk: each folder, and the folders directly inside it, that
-    hold a chopper-batch.json. Returned in the same shape as a live batch job (newest
+    hold a chopchop-batch.json. Returned in the same shape as a live batch job (newest
     first), so the app lists them next to the runs of this session."""
     seen: set[Path] = set()
     runs = []
@@ -480,7 +485,7 @@ def find_runs(folders: list[Path]) -> list[dict]:
         except OSError:
             continue
         for d in candidates:
-            if d in seen or not (d / SUMMARY).is_file():
+            if d in seen or not summary_file(d):
                 continue
             seen.add(d)
             run = read_run(d)
@@ -490,8 +495,10 @@ def find_runs(folders: list[Path]) -> list[dict]:
 
 
 def read_run(run_dir: Path) -> dict | None:
-    """A run folder's chopper-batch.json as a finished batch job; None if unreadable."""
-    path = run_dir / SUMMARY
+    """A run folder's chopchop-batch.json as a finished batch job; None if unreadable."""
+    path = summary_file(run_dir)
+    if path is None:
+        return None
     try:
         summary = json.loads(path.read_text())
         songs = summary["songs"]

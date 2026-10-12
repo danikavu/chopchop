@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from chopper import separation
+from chopchop import separation
 
 pytest.importorskip("audio_separator.separator")
 

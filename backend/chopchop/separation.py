@@ -19,7 +19,7 @@ from typing import Callable
 
 import numpy as np
 
-from .store import data_dir
+from .store import data_dir, env
 
 # SDR figures (dB, higher = cleaner) are audio-separator's published scores.
 MODELS = [
@@ -280,8 +280,8 @@ class _ProgressCapture:
                 return out
 
             def close(self):
-                if not getattr(self, "_chopper_closed", False):
-                    self._chopper_closed = True
+                if not getattr(self, "_chopchop_closed", False):
+                    self._chopchop_closed = True
                     cap._report(self)
                 super().close()
 
@@ -315,7 +315,7 @@ def arch_of(model: str) -> str:
 
 def gpu_settings() -> dict:
     """Saved per-architecture GPU settings ({"mdx": {"batch": 1, "fp16": false}, …}),
-    written by `chopper benchmark` from measurements on this machine."""
+    written by `chopchop benchmark` from measurements on this machine."""
     from . import settings
 
     return settings.get("gpu", {})
@@ -328,7 +328,7 @@ def save_gpu_settings(gpu: dict) -> None:
 
 
 def auto_batch(arch: str) -> int:
-    """A batch size the free VRAM should hold (a *candidate* for `chopper benchmark`,
+    """A batch size the free VRAM should hold (a *candidate* for `chopchop benchmark`,
     never applied untested: on Windows an oversized batch doesn't fail, the driver
     spills into system RAM and everything crawls)."""
     import torch
@@ -344,9 +344,9 @@ def gpu_tuning(model: str = "", force_cpu: bool = False, batch: int | None = Non
     """Batch size and fp16 for one run.
 
     Defaults are audio-separator's own (batch 1, fp32): measured faster than bigger
-    guesses on at least one 6 GB Windows card. They only change through `chopper
+    guesses on at least one 6 GB Windows card. They only change through `chopchop
     benchmark` (measured on this machine, saved in settings.json) or the overrides
-    CHOPPER_GPU_BATCH=N / CHOPPER_FP16=0|1. Demucs gets nothing: it has no batch
+    CHOPCHOP_GPU_BATCH=N / CHOPCHOP_FP16=0|1. Demucs gets nothing: it has no batch
     setting and doesn't use autocast. batch / fp16: forced (retries after a failure).
     """
     arch = arch_of(model) if model else "mdxc"
@@ -360,7 +360,7 @@ def gpu_tuning(model: str = "", force_cpu: bool = False, batch: int | None = Non
     if not torch.cuda.is_available():
         return plain  # Apple GPUs: batching measured no faster; CPU: n/a
     saved = gpu_settings().get(arch, {})
-    env_batch, env_fp16 = os.environ.get("CHOPPER_GPU_BATCH"), os.environ.get("CHOPPER_FP16")
+    env_batch, env_fp16 = env("GPU_BATCH"), env("FP16")
     if batch is None:
         batch = int(env_batch) if env_batch and env_batch.isdigit() else int(saved.get("batch", 1))
     if fp16 is None:

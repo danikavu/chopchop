@@ -220,7 +220,7 @@ Run a workflow over every track in a folder, e.g. a drum kit for each song of an
 
    Save your own workflows by name.
 3. **Output folder:** it defaults to your export folder. Each run gets its own folder with
-   one subfolder per song and a `chopper-batch.json` summary.
+   one subfolder per song and a `chopchop-batch.json` summary.
 
 Songs run one after another, with live progress for each step:
 
