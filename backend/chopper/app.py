@@ -11,6 +11,7 @@ import tempfile
 import time
 from dataclasses import asdict
 from pathlib import Path
+from typing import Literal
 from urllib.parse import quote
 
 from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
@@ -18,7 +19,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import analysis, audio, kits, separation, settings, slicing, tempo, workflows
+from . import analysis, audio, kits, separation, settings, slicing, tempo, transpose, workflows
 from .jobs import Job, JobRunner
 from .service import Chopper
 from .store import PAD_SLOTS, ProjectNotFound, Store, find_sample, find_track, new_id, safe_name
@@ -123,6 +124,8 @@ class ExportKitReq(BaseModel):
     kit_name: str = "kit"
     normalize: bool = False
     from_pads: bool = False  # export what's on the pads, named A01_…, B02_…
+    # Also write keyed samples transposed to C, each way in its own folder.
+    to_c: Literal["none", "repitched", "warped", "both"] = "none"
 
 
 class BatchReq(BaseModel):
@@ -746,13 +749,18 @@ def create_app(store: Store | None = None) -> FastAPI:
         if not samples:
             raise HTTPException(400, "no samples to export")
         bpm = (p.get("tempo") or {}).get("bpm")
+        to_c = transpose.modes(req.to_c)
         out = export_folder(p, "Pads" if req.from_pads else "Kit")
         if out:
-            kits.write_kit(store.path(pid), samples, out, req.normalize, labels, bpm)
+            kits.write_kit(store.path(pid), samples, out, req.normalize, labels, bpm, to_c)
             path = out
         else:
-            path = kits.export_kit(store.path(pid), p, samples, req.kit_name or p["name"], req.normalize, labels, bpm)
-        return export_result(pid, path, out, len(samples))
+            path = kits.export_kit(store.path(pid), p, samples, req.kit_name or p["name"], req.normalize, labels,
+                                   bpm, to_c)
+        result = export_result(pid, path, out, len(samples))
+        # Keyed samples not already in C, once per way of transposing.
+        result["transposed"] = sum(transpose.steps_to_c(s.get("key")) is not None for s in samples) * len(to_c)
+        return result
 
     # ---------- frontend ----------
 

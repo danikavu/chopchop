@@ -212,6 +212,15 @@ lighter engine without PyTorch. You can then import stems you already have (e.g.
 5. The **sample browser** groups samples by category. You can play, rename, recategorize and
    set the key of each sample, trim it (✂), or re-detect its key (♪). **Export kit** zips the
    samples currently shown as `kit/<category>/<name>_<key>.wav`.
+   - **→ C** also exports every keyed sample transposed to C, each way in its own folder:
+     - `In C (repitched)/`: resampled like a sampler, so length and tempo change (a loop's
+       BPM tag is updated).
+     - `In C (warped)/`: pitch-shifted, same length.
+     - **both** writes the two folders.
+
+     Notes move to the nearest C (at most 6 semitones; `F#1` → `C1`). Keys keep their mode
+     (`A min` → `C min`). Samples already in C, or without a key, are not repeated. The
+     choice is remembered.
 
 ### Export folder
 

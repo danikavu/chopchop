@@ -10,7 +10,7 @@ from typing import Callable
 import librosa
 import numpy as np
 
-from . import analysis, audio
+from . import analysis, audio, transpose
 from .naming import export_name
 from .slicing import detect_onsets
 from .store import new_id, safe_name
@@ -371,24 +371,45 @@ def pad_label(index: int) -> str:
 
 
 def kit_files(project_dir: Path, samples: list[dict], norm: bool = False,
-              pad_labels: dict[str, str] | None = None, bpm: float | None = None):
+              pad_labels: dict[str, str] | None = None, bpm: float | None = None,
+              to_c: tuple[str, ...] = ()):
     """Yield (relative path, wav bytes) for a kit: <category>/<name>[_<bpm>bpm][_<key>].wav,
     or, with pad_labels ({sample id: 'A01'}), a flat A01_<name>….wav pad kit. BPM only on
-    sounds at least ~a beat long (loops, phrases), not one-shots."""
+    sounds at least ~a beat long (loops, phrases), not one-shots.
+
+    to_c: also write every keyed sample transposed to C ('repitched' / 'warped', see
+    transpose.py) into its own 'In C (…)/' folder. Samples already in C, or without a
+    key, aren't repeated there."""
     used: set[str] = set()
+
+    def unique(base: str) -> str:
+        path, n = f"{base}.wav", 2
+        while path in used:
+            path, n = f"{base}_{n}.wav", n + 1
+        used.add(path)
+        return path
+
     for s in samples:
         y, sr = audio.read(project_dir / s["file"])
         if norm:
             y = audio.normalize(y)
         # Drum hits are one-shots however long their tail rings: never a BPM in the name.
         tempo = None if s.get("origin") == "drums" else bpm
-        name = export_name(safe_name(s["name"]), tempo, s.get("duration") or y.shape[1] / sr, s.get("key"))
-        base = f"{pad_labels[s['id']]}_{name}" if pad_labels else f"{safe_name(s['category'])}/{name}"
-        path, n = f"{base}.wav", 2
-        while path in used:
-            path, n = f"{base}_{n}.wav", n + 1
-        used.add(path)
-        yield path, audio.wav_bytes24(y, sr)
+        dur = s.get("duration") or y.shape[1] / sr
+        prefix = f"{pad_labels[s['id']]}_" if pad_labels else f"{safe_name(s['category'])}/"
+        name = export_name(safe_name(s["name"]), tempo, dur, s.get("key"))
+        yield unique(prefix + name), audio.wav_bytes24(y, sr)
+
+        steps = transpose.steps_to_c(s.get("key"))
+        if steps is None:
+            continue
+        key = transpose.key_in_c(s["key"])
+        for mode in to_c:
+            moved = transpose.shift(y, sr, steps, mode)
+            # Repitched plays faster / slower, so a loop's tempo moves with it.
+            ratio = 2 ** (steps / 12) if mode == "repitched" else 1.0
+            name = export_name(safe_name(s["name"]), tempo and tempo * ratio, dur / ratio, key)
+            yield unique(f"{transpose.FOLDERS[mode]}/{prefix}{name}"), audio.wav_bytes24(moved, sr)
 
 
 def export_kit(
@@ -399,6 +420,7 @@ def export_kit(
     norm: bool = False,
     pad_labels: dict[str, str] | None = None,
     bpm: float | None = None,
+    to_c: tuple[str, ...] = (),
 ) -> Path:
     """Zip a kit (see kit_files) under a <kit>/ folder."""
     if not samples:
@@ -406,16 +428,17 @@ def export_kit(
     kit = safe_name(kit_name) or "kit"
     zip_path = project_dir / "exports" / f"{kit}-{time.strftime('%Y%m%d-%H%M%S')}.zip"
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
-        for path, data in kit_files(project_dir, samples, norm, pad_labels, bpm):
+        for path, data in kit_files(project_dir, samples, norm, pad_labels, bpm, to_c):
             zf.writestr(f"{kit}/{path}", data)
     return zip_path
 
 
 def write_kit(project_dir: Path, samples: list[dict], out_dir: Path, norm: bool = False,
-              pad_labels: dict[str, str] | None = None, bpm: float | None = None) -> list[Path]:
+              pad_labels: dict[str, str] | None = None, bpm: float | None = None,
+              to_c: tuple[str, ...] = ()) -> list[Path]:
     """Write a kit (see kit_files) straight into a folder; returns the files written."""
     written = []
-    for path, data in kit_files(project_dir, samples, norm, pad_labels, bpm):
+    for path, data in kit_files(project_dir, samples, norm, pad_labels, bpm, to_c):
         target = out_dir / path
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(data)

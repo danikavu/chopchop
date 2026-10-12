@@ -342,3 +342,40 @@ def test_project_exports_go_into_the_export_folder(client, tmp_path):
     # Same minute again: a new folder, nothing overwritten.
     again = client.post(f"/api/projects/{pid}/samples/export", json={"kit_name": "k"}).json()
     assert again["path"] != kit["path"]
+
+
+def test_export_keyed_samples_transposed_to_c(client, tmp_path):
+    import librosa
+
+    from chopper import transpose
+
+    # Three pitched sounds (E3, A3, C4) and one with no key.
+    y = synth.place([(0.0, synth.tone(52)), (1.0, synth.tone(57)), (2.0, synth.tone(60)), (3.0, synth.tone(57))], 4.0)
+    pid = client.post("/api/projects", files={"file": ("bass.wav", wav(y), "audio/wav")}).json()["id"]
+    ids = []
+    for i, key in enumerate(["E3", "A min", "C4", None]):
+        s = client.post(f"/api/projects/{pid}/samples", json={"track": "mix", "start": i, "end": i + 0.8,
+                                                               "name": f"bit{i}"}).json()
+        body = {"key": key} if key else {"clear_key": True}
+        client.patch(f"/api/projects/{pid}/samples/{s['id']}", json=body)
+        ids.append(s["id"])
+
+    out = tmp_path / "exp"
+    client.put("/api/settings", json={"export_dir": str(out)})
+    r = client.post(f"/api/projects/{pid}/samples/export", json={"kit_name": "k", "to_c": "both"}).json()
+    assert r["count"] == 4 and r["transposed"] == 4  # E3 and A min, two ways each; C4 and the unkeyed one skipped
+    root = Path(r["path"])
+    for mode in ("repitched", "warped"):
+        files = sorted(p.name for p in (root / transpose.FOLDERS[mode]).rglob("*.wav"))
+        assert files == ["bit0_C3.wav", "bit1_Cmin.wav"], files
+        moved, sr = sf.read(next((root / transpose.FOLDERS[mode]).rglob("bit0_C3.wav")))
+        f0 = np.median(librosa.yin(moved.T[0] if moved.ndim > 1 else moved, fmin=60, fmax=600, sr=sr)[:20])
+        assert librosa.hz_to_note(f0, unicode=False) == "C3", (mode, f0)
+        n_orig = sf.info(next(root.rglob("bit0_E3.wav"))).frames
+        n = len(moved)
+        assert (n > n_orig * 1.2) if mode == "repitched" else (n == n_orig)  # E3 -> C3 down 4: slower
+    assert len(list(root.rglob("*.wav"))) == 8
+
+    plain = client.post(f"/api/projects/{pid}/samples/export", json={"kit_name": "k"}).json()
+    assert plain["transposed"] == 0 and not any(p.parent.name.startswith("In C") for p in Path(plain["path"]).rglob("*"))
+    assert client.post(f"/api/projects/{pid}/samples/export", json={"to_c": "sideways"}).status_code == 422

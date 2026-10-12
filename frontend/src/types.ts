@@ -109,6 +109,8 @@ export interface ExportResult {
   url: string | null  // null when written into the export folder
   folder?: boolean
   count: number
+  transposed?: number  // extra copies in C (see ToC)
+
 }
 
 export interface Settings {
@@ -162,3 +164,6 @@ export interface FolderListing {
   dirs: string[]
   files: string[]
 }
+
+/** Also export keyed samples transposed to C: resampled (repitched), length kept (warped), or both. */
+export type ToC = 'none' | 'repitched' | 'warped' | 'both'

@@ -10,6 +10,7 @@ import type {
   Settings,
   Slice,
   Tempo,
+  ToC,
   Track,
   Workflow,
 } from './types'
@@ -167,6 +168,6 @@ export const api = {
   history: (pid: string) => req<UndoState>('GET', `${P(pid)}/history`),
   undo: (pid: string) => req<{ undone: string; project: Project }>('POST', `${P(pid)}/undo`),
   redo: (pid: string) => req<{ redone: string; project: Project }>('POST', `${P(pid)}/redo`),
-  exportKit: (pid: string, body: { sample_ids?: string[]; kit_name: string; normalize: boolean; from_pads?: boolean }) =>
+  exportKit: (pid: string, body: { sample_ids?: string[]; kit_name: string; normalize: boolean; from_pads?: boolean; to_c?: ToC }) =>
     req<ExportResult>('POST', `${P(pid)}/samples/export`, body),
 }
