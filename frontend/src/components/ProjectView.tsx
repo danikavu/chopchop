@@ -7,6 +7,7 @@ import { DrumPads } from './DrumPads'
 import { BeatGrid } from './BeatGrid'
 import { Logo } from './Brand'
 import { JobProgress, SEPARATION_STEPS } from './JobProgress'
+import { FlowRunPanel } from './FlowRunPanel'
 import { KitPanel } from './KitPanel'
 import { SampleBrowser } from './SampleBrowser'
 import { type SeparateOptions, StemPicker } from './StemPicker'
@@ -82,6 +83,7 @@ export function ProjectView({ pid, meta, onBack }: Props) {
   }
   const [sepJobId, setSepJobId] = useState<string | null>(null)
   const [showSeparate, setShowSeparate] = useState(false)
+  const [showFlow, setShowFlow] = useState(false)
   // Separate only parts of the track: while picking, drawing on a lane marks a part.
   const [parts, setParts] = useState<Part[]>([])
   const [pickingParts, setPickingParts] = useState(false)
@@ -642,6 +644,7 @@ export function ProjectView({ pid, meta, onBack }: Props) {
           </button>
         )}
         <button onClick={() => fileInput.current?.click()}>Import stems…</button>
+        <button onClick={() => setShowFlow((v) => !v)} title="Run a node workflow on this project">Workflow…</button>
         <Logo />
       </header>
 
@@ -667,6 +670,16 @@ export function ProjectView({ pid, meta, onBack }: Props) {
             <div className="warn">Separation unavailable: {meta.separation.reason}. You can still import stems.</div>
           )}
         </div>
+      )}
+      {showFlow && (
+        <FlowRunPanel pid={pid} onClose={() => setShowFlow(false)}
+          onDone={() => {
+            void reload().then((p) => {
+              setSlices(p.slices, null)
+              setExportTracks((cur) => [...new Set([...cur, ...p.tracks.filter((t) => t.kind === 'stem').map((t) => t.name)])])
+            })
+            flash('Workflow done')
+          }} />
       )}
       {sepJobId && (
         <div className="banner">

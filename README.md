@@ -314,6 +314,40 @@ restart. Runs are found in:
 The CLI's runs are included too. **Remove** / **Clear all** only hide runs from the list
 (remembered in `data/settings.json`). Their files stay on disk.
 
+### Workflows: steps as a graph of nodes
+
+**Workflows** (top bar) is a node editor for chains that a fixed recipe can't express.
+For example: split vocals / instrumental with MDX and save both, then split the
+instrumental again with Demucs and cut sound bits from every one of its stems, saved
+transposed to C.
+
+- **Nodes:**
+  - **Input track**;
+  - **Separate**: any model, which stems to keep, mix the rest, de-bleed. It has one
+    output per stem;
+  - **Stem tool**: split drums, remove reverb, lead / backing vocals. It has one output
+    per part;
+  - **Slices**: detect hits, or chop on the beat grid;
+  - **Drum kit**;
+  - **Sound bits**;
+  - **Save stems**, **Save slices**, **Save samples** (with **→ C** and pad names).
+
+  Select a node to see all its options.
+- **Connections** are typed: audio (orange), slices (cyan) and samples (purple).
+  - An input takes any number of connections: connect every stem into one Sound bits
+    node, or several kits into one Save.
+  - Wrong-type connections and loops are refused.
+  - Changing a model drops connections from stems it no longer makes.
+- **Stems of a stem** are named after it (`instrumental_drums`) and never replace existing
+  tracks. Everything a workflow makes stays in the project.
+- **Run it:**
+  - on a project: **Run on this project** here, or **Workflow…** in a project's top bar
+    (files go to `<export folder>/<project>/<workflow> – <date>/`);
+  - on a folder: **Run on a folder (batch)…**, or pick it under *Node workflows* on the
+    Batch page. Each song becomes a project, with one subfolder per song.
+- **Save** keeps a workflow for later (`data/flows.json`). There are three examples to
+  start from.
+
 ### Command line
 
 Batches also run from a terminal, with no browser or server needed. Inside the venv the
@@ -449,10 +483,13 @@ python scripts/run.py test   # pytest (synthetic drums/tones with known answers)
   - `analysis.py`: features, classification, note and key
   - `kits.py`: drum kits, sound bits, kit export
   - `separation.py`: audio-separator wrapper
+  - `workflows.py`: batch recipes and folder runs
+  - `flows.py`: node workflows (graph check, run order, each node's step)
   - `store.py`: on-disk projects
   - `jobs.py`: background jobs
 - `frontend/src/`: React + wavesurfer.js UI. `ProjectView.tsx` coordinates the lanes
-  (`TrackLane.tsx`), side panels and sample browser.
+  (`TrackLane.tsx`), side panels and sample browser. `WorkflowsView.tsx` is the node editor
+  (React Flow); `flowCatalog.ts` lists the node types.
 
 Notes:
 

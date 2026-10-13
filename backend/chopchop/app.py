@@ -19,7 +19,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import analysis, audio, kits, portions, separation, settings, slicing, tempo, transpose, workflows
+from . import analysis, audio, flows, kits, portions, separation, settings, slicing, tempo, transpose, workflows
 from .jobs import Job, JobRunner
 from .service import ChopChop
 from .store import PAD_SLOTS, ProjectNotFound, Store, find_sample, find_track, new_id, safe_name
@@ -142,7 +142,12 @@ class BatchReq(BaseModel):
     files: list[str] | None = None  # subset of the folder's audio files (names); None = all
     recursive: bool = False
     output_dir: str | None = None  # default: <data>/batches
-    workflow: workflows.Workflow
+    workflow: workflows.Workflow | None = None  # a recipe of steps…
+    flow: flows.Flow | None = None  # …or a node workflow
+
+
+class FlowRunReq(BaseModel):
+    flow: flows.Flow
 
 
 class SettingsReq(BaseModel):
@@ -471,12 +476,18 @@ def create_app(store: Store | None = None) -> FastAPI:
 
     @app.post("/api/batches")
     def start_batch(req: BatchReq):
+        wf = req.flow or req.workflow
+        if wf is None:
+            raise HTTPException(400, "choose a workflow")
         try:
-            workflows.check(req.workflow)
-            if req.workflow.separate.enabled or req.workflow.tools:
-                st = separation.status()
-                if not st["available"]:
-                    raise ValueError(st["reason"])
+            if req.flow:
+                check_flow(req.flow)
+            else:
+                workflows.check(req.workflow)
+                if req.workflow.separate.enabled or req.workflow.tools:
+                    st = separation.status()
+                    if not st["available"]:
+                        raise ValueError(st["reason"])
         except ValueError as e:
             raise HTTPException(400, str(e))
         try:
@@ -485,12 +496,63 @@ def create_app(store: Store | None = None) -> FastAPI:
             raise HTTPException(400, str(e))
 
         def work(job: Job):
-            return workflows.run_batch(svc, files, req.workflow, out_root, job)
+            return workflows.run_batch(svc, files, wf, out_root, job)
 
         job = jobs.submit("batch", "batch", work)
-        job.detail = {"output": str(out_root), "workflow": req.workflow.name,
+        job.detail = {"output": str(out_root), "workflow": wf.name,
                       "songs": [{"file": str(f), "song": f.stem, "status": "queued", "message": ""} for f in files]}
         return asdict(job)
+
+    # ---------- node workflows ----------
+
+    def check_flow(flow: flows.Flow) -> list:
+        order = flows.check(flow)
+        if any(n.type in ("separate", "tool") for n in flow.nodes):
+            st = separation.status()
+            if not st["available"]:
+                raise ValueError(st["reason"])
+        return order
+
+    @app.get("/api/flows")
+    def list_flows():
+        return {"presets": [f.model_dump() for f in flows.PRESETS], "saved": flows.saved()}
+
+    @app.put("/api/flows")
+    def save_flow(flow: flows.Flow):
+        try:
+            return {"saved": flows.save(flow)}
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+
+    @app.delete("/api/flows/{name}")
+    def delete_flow(name: str):
+        return {"saved": flows.delete(name)}
+
+    @app.post("/api/flows/check")
+    def check_flow_route(flow: flows.Flow):
+        """Validate without running: the run order, or what's wrong."""
+        try:
+            return {"order": [n.id for n in flows.check(flow)]}
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+
+    @app.post("/api/projects/{pid}/flow")
+    def run_flow(pid: str, req: FlowRunReq):
+        """Run a node workflow on this project (its mix is the Input track)."""
+        p = get_project(pid)
+        try:
+            check_flow(req.flow)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        base = settings.export_dir() or workflows.default_output()
+        out = workflows.unique_dir(base / workflows.folder_name(p["name"]) / workflows.folder_name(
+            f"{req.flow.name} – {time.strftime('%Y-%m-%d %H.%M')}"))
+
+        def work(job: Job):
+            res = flows.run(svc, pid, req.flow, out, job.update, job.check_cancel)
+            return {**res, "output": str(out), "workflow": req.flow.name}
+
+        return asdict(jobs.submit("flow", pid, work))
 
     def hidden_runs() -> set[str]:
         return set(settings.get("hidden_runs", []))

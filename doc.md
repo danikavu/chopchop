@@ -26,8 +26,9 @@ This page walks through the app screen by screen. For installing and running it,
 7. [Drum pads](#7-drum-pads)
 8. [The sample browser](#8-the-sample-browser)
 9. [Batch: a whole folder at once](#9-batch-a-whole-folder-at-once)
-10. [Command line](#10-command-line)
-11. [Keyboard shortcuts](#keyboard-shortcuts)
+10. [Workflows](#10-workflows)
+11. [Command line](#11-command-line)
+12. [Keyboard shortcuts](#keyboard-shortcuts)
 
 ---
 
@@ -235,7 +236,37 @@ hide runs from the list; their files stay on disk.
 
 ---
 
-## 10. Command line
+## 10. Workflows
+
+![Workflow editor](docs/screenshots/workflows.png)
+
+**Workflows** chains steps as a graph of nodes. The example above:
+
+- **Stage 1:** MDX splits the song into vocals and instrumental, and both are saved.
+- **Stage 2:** Demucs splits the instrumental into drums, bass and other. All three
+  feed one **Sound bits** node, whose bits are saved together with copies transposed
+  to C.
+
+How it works:
+
+- **Adding nodes:** use the palette on the left. **Separate** and **Stem tool** get one
+  output per stem or part, so a 2-stem MDX model gives *vocals* and *instrumental*.
+- **Connecting:** drag from an output to an input. Connections carry **audio** (orange),
+  **slices** (cyan) or **samples** (purple), and only matching kinds connect. An input
+  takes as many connections as you like.
+- **Options:** select a node to see all of them on the right: the same choices as in the
+  rest of the app.
+- **Checking:** the bar shows **✓ ready**, or what's wrong.
+- **Running:**
+  - on one track: **Run on this project** here, or **Workflow…** in a project's top bar;
+  - on a folder: **Run on a folder (batch)…**, or choose it on the Batch page under
+    *Node workflows*.
+
+  New stems, chops and samples stay in the project, so you can keep working on them.
+
+---
+
+## 11. Command line
 
 The same workflows run from a terminal, without the browser:
 
