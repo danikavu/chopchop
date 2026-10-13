@@ -79,13 +79,29 @@ class ChopChop:
 
         parts: only separate these (start, end) seconds; the stems are silent elsewhere
         but still full length, in line with the mix (see portions.py)."""
+        return list(self.separate_track(pid, None, model, stems, rest, replace, progress, tempo_after,
+                                        debleed, parts).values())
+
+    def separate_track(self, pid: str, source: str | None, model: str, stems: list[str] | None = None,
+                       rest: bool = True, replace: bool = False, progress: Progress = _quiet,
+                       tempo_after: bool = False, debleed: bool = True,
+                       parts: list[tuple[float, float]] | None = None, overwrite: bool = True) -> dict[str, str]:
+        """Separate any track (None = the mix); returns {stem: new track name}.
+
+        Stems of the mix are named as the model names them (vocals, drums…); stems of
+        another track get its name in front (instrumental_drums), numbered if taken.
+        replace: drop the project's current stems first (only for the mix).
+        overwrite: a stem of the mix replaces a same-named track (as a re-separation
+        does); off, it is numbered instead (vocals_2), e.g. in workflows."""
         keep = self.check_separate(model, stems)
         p = self.store.get(pid)
         folder = self.store.path(pid)
         mix = next(t for t in p["tracks"] if t["kind"] == "mix")
+        src_track = mix if source is None else find_track(p, source)
+        prefix = "" if src_track["kind"] == "mix" else f"{src_track['name']}_"
         out = folder / "separation" / new_id()
         try:
-            src, layout = folder / mix["file"], None
+            src, layout = folder / src_track["file"], None
             if parts:
                 src, layout, length = portions.excerpt(src, parts, out / "parts")
                 progress(0.01, f"Separating {len(layout)} part{'s' if len(layout) > 1 else ''} "
@@ -104,15 +120,27 @@ class ChopChop:
             # Lanes in the model's usual order (vocals, drums, bass, …), remainder last.
             order = next(m for m in separation.MODELS if m["id"] == model)["stems"]
             found = dict(sorted(found.items(), key=lambda kv: order.index(kv[0]) if kv[0] in order else 99))
-            added = []
-            with self.store.undo_group(pid, f"Separate stems ({len(layout)} parts)" if layout else "Separate stems"):
+            added: dict[str, str] = {}
+            what = "Separate stems" if prefix == "" else f"Separate {src_track['name']}"
+            with self.store.undo_group(pid, f"{what} ({len(layout)} parts)" if layout else what):
+                replace = replace and prefix == ""
                 if replace:
                     with self.store.edit(pid) as proj:
                         proj["tracks"] = [t for t in proj["tracks"] if t["kind"] != "stem"]
+                taken = {t["name"] for t in self.store.get(pid)["tracks"]}
                 for i, (name, path) in enumerate(found.items()):
                     progress(0.9 + 0.1 * i / len(found), f"Importing stem {i + 1}/{len(found)}: {name}")
-                    added.append(self.add_track(pid, name, "stem", path)["name"])
-                if tempo_after and any(analysis.is_drum_track(n) for n in added):
+                    new = safe_name(prefix + name)
+                    # The mix's own stems replace same-named ones, as before; stems of
+                    # another track never overwrite anything.
+                    if (prefix or not overwrite) and new in taken:
+                        n = 2
+                        while f"{new}_{n}" in taken:
+                            n += 1
+                        new = f"{new}_{n}"
+                    taken.add(new)
+                    added[name] = self.add_track(pid, new, "stem", path)["name"]
+                if tempo_after and any(analysis.is_drum_track(n) for n in added.values()):
                     progress(0.99, "Estimating tempo from the drums…")
                     self.detect_tempo(pid, None)
         finally:

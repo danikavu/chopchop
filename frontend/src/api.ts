@@ -1,6 +1,7 @@
 import type {
   BatchJob,
   ExportResult,
+  Flow,
   FolderListing,
   Job,
   Meta,
@@ -106,9 +107,14 @@ export const api = {
   workflows: () => req<{ presets: Workflow[]; saved: Workflow[]; default_output: string }>('GET', '/api/workflows'),
   saveWorkflow: (wf: Workflow) => req<{ saved: Workflow[] }>('PUT', '/api/workflows', wf),
   deleteWorkflow: (name: string) => req<{ saved: Workflow[] }>('DELETE', `/api/workflows/${enc(name)}`),
-  startBatch: (body: { input_dir: string; files?: string[]; recursive: boolean; output_dir?: string; workflow: Workflow }) =>
+  startBatch: (body: { input_dir: string; files?: string[]; recursive: boolean; output_dir?: string; workflow?: Workflow; flow?: Flow }) =>
     req<BatchJob>('POST', '/api/batches', body),
   // scan: extra folders to look in for earlier runs (chopchop-batch.json)
+  flows: () => req<{ presets: Flow[]; saved: Flow[] }>('GET', '/api/flows'),
+  saveFlow: (flow: Flow) => req<{ saved: Flow[] }>('PUT', '/api/flows', flow),
+  deleteFlow: (name: string) => req<{ saved: Flow[] }>('DELETE', `/api/flows/${enc(name)}`),
+  checkFlow: (flow: Flow) => req<{ order: string[] }>('POST', '/api/flows/check', flow),
+  runFlow: (pid: string, flow: Flow) => req<Job>('POST', `${P(pid)}/flow`, { flow }),
   batches: (scan: string[] = []) => req<BatchJob[]>('GET', `/api/batches${scanQuery(scan)}`),
   removeBatch: (jid: string, scan: string[] = []) => req('DELETE', `/api/batches/${enc(jid)}${scanQuery(scan)}`),
   clearBatches: (scan: string[] = []) => req<{ removed: number }>('DELETE', `/api/batches${scanQuery(scan)}`),

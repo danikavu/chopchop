@@ -413,10 +413,11 @@ def prepare(input_dir: str | Path, files: list[str] | None = None, recursive: bo
     return found, unique_dir(base / batch_name(folder))
 
 
-def run_batch(svc: ChopChop, files: list[Path], wf: Workflow, out_root: Path, job,
+def run_batch(svc: ChopChop, files: list[Path], wf, out_root: Path, job,
               on_song: Callable[[dict], None] | None = None) -> dict:
     """Run the workflow over files, one song after another. A failing song is recorded
-    and the batch carries on; Cancel stops between steps. on_song(entry) is called as
+    and the batch carries on; Cancel stops between steps. wf is a Workflow (a recipe of
+    steps) or a flows.Flow (a node workflow). on_song(entry) is called as
     each song finishes (done or error)."""
     out_root.mkdir(parents=True, exist_ok=True)
     started = time.time()
@@ -433,7 +434,9 @@ def run_batch(svc: ChopChop, files: list[Path], wf: Workflow, out_root: Path, jo
             job.update((n + frac) / len(files), f"Song {n + 1}/{len(files)} · {f.stem} · {msg}")
 
         try:
-            res = run_song(svc, f, wf, out_dir, progress, job.check_cancel)
+            from . import flows
+            song = flows.run_song if isinstance(wf, flows.Flow) else run_song
+            res = song(svc, f, wf, out_dir, progress, job.check_cancel)
             entry.update(status="done", message="Done", output=str(out_dir), **res)
         except Exception as exc:
             from .jobs import Cancelled

@@ -177,3 +177,34 @@ export interface FolderListing {
 
 /** Also export keyed samples transposed to C: resampled (repitched), length kept (warped), or both. */
 export type ToC = 'none' | 'repitched' | 'warped' | 'both'
+
+// ---------- node workflows ----------
+
+export type FlowNodeType =
+  | 'input' | 'separate' | 'tool' | 'slices' | 'kit' | 'bits' | 'save_stems' | 'save_slices' | 'save_samples'
+
+/** What a connection carries. */
+export type PortKind = 'audio' | 'slices' | 'samples'
+
+export interface FlowNode {
+  id: string
+  type: FlowNodeType
+  params: Record<string, unknown>
+  x: number
+  y: number
+}
+
+export interface FlowEdge {
+  source: string
+  port: string
+  target: string
+}
+
+export interface Flow {
+  kind?: 'flow'
+  name: string
+  description: string
+  nodes: FlowNode[]
+  edges: FlowEdge[]
+  keep_projects: boolean
+}

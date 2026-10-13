@@ -36,6 +36,7 @@ export function ProjectList({ onOpen }: { onOpen: (pid: string) => void }) {
     <>
     <header className="topbar">
       <b className="title">Projects</b>
+      <button className="link" onClick={() => (location.hash = '#/workflows')}>Workflows</button>
       <button className="link" onClick={() => (location.hash = '#/batch')}>Batch</button>
       <div className="spacer" />
       <Logo />

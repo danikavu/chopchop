@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { lazy, Suspense, useEffect, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { api } from './api'
 import { BatchView } from './components/BatchView'
@@ -7,6 +7,9 @@ import { ProjectList } from './components/ProjectList'
 import { ProjectView } from './components/ProjectView'
 import type { Meta } from './types'
 import './styles.css'
+
+// The node editor (React Flow) loads only when the Workflows page opens.
+const WorkflowsView = lazy(() => import('./components/WorkflowsView').then((m) => ({ default: m.WorkflowsView })))
 
 function currentProject(): string | null {
   const m = location.hash.match(/^#\/p\/([a-f0-9]+)/)
@@ -17,9 +20,14 @@ function onBatchPage() {
   return location.hash.startsWith('#/batch')
 }
 
+function onWorkflowsPage() {
+  return location.hash.startsWith('#/workflows')
+}
+
 function App() {
   const [pid, setPid] = useState<string | null>(currentProject)
   const [batch, setBatch] = useState(onBatchPage)
+  const [flows, setFlows] = useState(onWorkflowsPage)
   const [meta, setMeta] = useState<Meta | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -28,6 +36,7 @@ function App() {
     const onHash = () => {
       setPid(currentProject())
       setBatch(onBatchPage())
+      setFlows(onWorkflowsPage())
     }
     window.addEventListener('hashchange', onHash)
     return () => window.removeEventListener('hashchange', onHash)
@@ -36,6 +45,11 @@ function App() {
   let page
   if (error) page = <div className="center error">{error}</div>
   else if (!meta) page = <div className="center muted">Loading…</div>
+  else if (flows) page = (
+    <Suspense fallback={<div className="center muted">Loading…</div>}>
+      <WorkflowsView meta={meta} onOpenProject={(id) => (location.hash = `#/p/${id}`)} />
+    </Suspense>
+  )
   else if (batch) page = <BatchView meta={meta} onOpenProject={(id) => (location.hash = `#/p/${id}`)} />
   else if (pid) page = <ProjectView key={pid} pid={pid} meta={meta} onBack={() => (location.hash = '')} />
   else page = <ProjectList onOpen={(id) => (location.hash = `#/p/${id}`)} />

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api } from '../api'
-import type { BatchJob, FolderListing, Meta, Workflow } from '../types'
+import { NODE_TYPES } from '../flowCatalog'
+import type { BatchJob, Flow, FolderListing, Meta, Workflow } from '../types'
 import { Logo } from './Brand'
 import { useExportDir } from './ExportFolder'
 import { FolderPicker } from './FolderPicker'
@@ -36,6 +37,9 @@ export function BatchView({ meta, onOpenProject }: Props) {
   const [batches, setBatches] = useState<BatchJob[]>([])
   const [error, setError] = useState<string | null>(null)
   const [saveName, setSaveName] = useState('')
+  // Node workflows (made on the Workflows page) run here too, song by song.
+  const [flows, setFlows] = useState<Flow[]>([])
+  const [flow, setFlow] = useState<Flow | null>(null)
 
   useEffect(() => {
     api.workflows().then((r) => {
@@ -43,8 +47,19 @@ export function BatchView({ meta, onOpenProject }: Props) {
       setSaved(r.saved)
       api.settings().then((s) => setDefaultOut(s.default_batch_output)).catch(() => setDefaultOut(r.default_output))
       setWf(clone(r.presets[0]))
-      setBase(r.presets[0].name)
+      setBase((b) => (b.startsWith('flow:') ? b : r.presets[0].name)) // a node workflow picked meanwhile stays
     }).catch((e) => setError(e.message))
+    api.flows().then((r) => {
+      const all = [...r.saved, ...r.presets]
+      setFlows(all)
+      // Arrived from Workflows → "Run on a folder": that one is chosen.
+      const m = location.hash.match(/[?&]flow=([^&]+)/)
+      const pick = m && all.find((f) => f.name === decodeURIComponent(m[1]))
+      if (pick) {
+        setFlow(pick)
+        setBase(`flow:${pick.name}`)
+      }
+    }).catch(() => undefined)
   }, [])
 
   // Earlier runs are also read from disk: in the input folder (e.g. a past run's folder)
@@ -73,6 +88,15 @@ export function BatchView({ meta, onOpenProject }: Props) {
   }
 
   const pickWorkflow = (name: string) => {
+    if (name.startsWith('flow:')) {
+      const f = flows.find((x) => x.name === name.slice(5))
+      if (f) {
+        setFlow(f)
+        setBase(name)
+      }
+      return
+    }
+    setFlow(null)
     const found = [...saved, ...presets].find((w) => w.name === name)
     if (found) {
       setWf(clone(found))
@@ -81,12 +105,14 @@ export function BatchView({ meta, onOpenProject }: Props) {
   }
 
   const start = async () => {
-    if (!wf) return
+    if (!wf && !flow) return
     setError(null)
     try {
       const files = listing && !recursive ? listing.files.filter((f) => !excluded.includes(f)) : undefined
       if (output.trim() && output.trim() !== exportDir) await saveExportDir(output.trim())
-      await api.startBatch({ input_dir: input, files, recursive, output_dir: output || undefined, workflow: wf })
+      await api.startBatch({
+        input_dir: input, files, recursive, output_dir: output || undefined, ...(flow ? { flow } : { workflow: wf! }),
+      })
       void refresh()
     } catch (e) {
       setError((e as Error).message)
@@ -142,6 +168,7 @@ export function BatchView({ meta, onOpenProject }: Props) {
       <header className="topbar">
         <button className="link" onClick={() => (location.hash = '')}>← Projects</button>
         <h1 className="title">Batch</h1>
+        <button className="link" onClick={() => (location.hash = '#/workflows')}>Workflows</button>
         <span className="muted">Run a workflow over a whole folder (e.g. an album → a drum kit per song)</span>
         <div className="spacer" />
         <Logo />
@@ -201,8 +228,13 @@ export function BatchView({ meta, onOpenProject }: Props) {
                     {saved.map((w) => <option key={w.name} value={w.name}>{w.name}</option>)}
                   </optgroup>
                 )}
+                {flows.length > 0 && (
+                  <optgroup label="Node workflows">
+                    {flows.map((f) => <option key={f.name} value={`flow:${f.name}`}>{f.name}</option>)}
+                  </optgroup>
+                )}
               </select>
-              {isSaved && (
+              {isSaved && !flow && (
                 <button className="icon-btn" title="Delete this saved workflow" onClick={async () => {
                   const r = await api.deleteWorkflow(base)
                   setSaved(r.saved)
@@ -210,13 +242,31 @@ export function BatchView({ meta, onOpenProject }: Props) {
                 }}>×</button>
               )}
             </div>
-            {wf?.description && <p className="tip">{wf.description}</p>}
-            {wf && <WorkflowEditor meta={meta} wf={wf} onChange={setWf} />}
-            <div className="row">
-              <input placeholder="Save as… (name)" value={saveName} onChange={(e) => setSaveName(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && saveWorkflow()} />
-              <button onClick={saveWorkflow} disabled={!saveName.trim()}>Save workflow</button>
-            </div>
+            {flow ? (
+              <>
+                {flow.description && <p className="tip">{flow.description}</p>}
+                <div className="flow-steps">
+                  {flow.nodes.filter((n) => n.type !== 'input').map((n) => (
+                    <span key={n.id} className="chip">{NODE_TYPES[n.type].label}</span>
+                  ))}
+                </div>
+                <p className="tip">
+                  A node workflow: each song becomes a project and runs through the graph
+                  {flow.keep_projects ? ' (kept, to open later)' : ''}.{' '}
+                  <button className="link" onClick={() => (location.hash = '#/workflows')}>Edit in Workflows →</button>
+                </p>
+              </>
+            ) : (
+              <>
+                {wf?.description && <p className="tip">{wf.description}</p>}
+                {wf && <WorkflowEditor meta={meta} wf={wf} onChange={setWf} />}
+                <div className="row">
+                  <input placeholder="Save as… (name)" value={saveName} onChange={(e) => setSaveName(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && saveWorkflow()} />
+                  <button onClick={saveWorkflow} disabled={!saveName.trim()}>Save workflow</button>
+                </div>
+              </>
+            )}
           </section>
 
           <section className="card">
@@ -237,12 +287,13 @@ export function BatchView({ meta, onOpenProject }: Props) {
             </p>
           </section>
 
-          {!meta.separation.available && (wf?.separate.enabled || (wf?.tools.length ?? 0) > 0) && (
+          {!meta.separation.available && (flow ? flow.nodes.some((n) => n.type === 'separate' || n.type === 'tool')
+            : wf?.separate.enabled || (wf?.tools.length ?? 0) > 0) && (
             <div className="warn">Separation unavailable: {meta.separation.reason}</div>
           )}
           {error && <div className="error">{error}</div>}
-          <button className="primary wide run-batch" onClick={start} disabled={!wf || !input || (!!listing && !recursive && count === 0)}>
-            Run “{wf?.name}” on {listing && !recursive ? `${count} track${count === 1 ? '' : 's'}` : 'the folder'}
+          <button className="primary wide run-batch" onClick={start} disabled={(!wf && !flow) || !input || (!!listing && !recursive && count === 0)}>
+            Run “{flow?.name ?? wf?.name}” on {listing && !recursive ? `${count} track${count === 1 ? '' : 's'}` : 'the folder'}
           </button>
         </div>
 
