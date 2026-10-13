@@ -609,7 +609,10 @@ export function ProjectView({ pid, meta, onBack }: Props) {
   const playheadX = HEAD_W + time * zoom - scrollLeft
   const zoomPos = Math.log(zoom / fitZoom) / Math.log(MAX_ZOOM / fitZoom)
   const selected = slices.find((s) => s.id === selectedId)
-  const separateOpen = (!hasStems || showSeparate) && !sepJobId
+  // The Workflow panel takes the separation bar's place; closing it brings that back.
+  const separateOpen = (!hasStems || showSeparate) && !sepJobId && !showFlow
+  // Drawing marks separation parts only while that bar (and its part picker) is showing.
+  pickingRef.current = pickingParts && separateOpen
 
   return (
     <div className="project">
@@ -639,7 +642,10 @@ export function ProjectView({ pid, meta, onBack }: Props) {
             e.target.value = ''
           }} />
         {hasStems && meta.separation.available && !sepJobId && (
-          <button onClick={() => setShowSeparate((v) => !v)} title="Re-separate with another model or stem choice">
+          <button onClick={() => {
+            setShowSeparate((v) => (showFlow ? true : !v))
+            setShowFlow(false)
+          }} title="Re-separate with another model or stem choice">
             Separate…
           </button>
         )}
