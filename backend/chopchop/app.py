@@ -20,6 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import analysis, audio, flows, kits, portions, separation, settings, slicing, tempo, transpose, workflows
+from . import models as models_registry
 from .jobs import Job, JobRunner
 from .service import ChopChop
 from .store import PAD_SLOTS, ProjectNotFound, Store, find_sample, find_track, new_id, safe_name
@@ -146,6 +147,36 @@ class BatchReq(BaseModel):
     flow: flows.Flow | None = None  # …or a node workflow
 
 
+class AddModelReq(BaseModel):
+    source: Literal["catalog", "files"]
+    filename: str | None = None  # catalog: the model's file name
+    arch: Literal["mdxc", "mdx"] | None = None  # files: what kind of model
+    model_path: str | None = None  # files: the checkpoint / .onnx on this computer
+    config_path: str | None = None  # files, MDXC: its .yaml config
+    mdx_params: dict | None = None  # files, MDX-Net: primary_stem, compensate, dim_f, dim_t, n_fft
+    label: str = ""
+    group: str = "Added"
+    stems: list[str] | None = None
+    note: str = ""
+    best_for: list[str] = []
+    aliases: dict[str, str] = {}  # the model's own stem name -> the one to use
+
+
+class ModelPatchReq(BaseModel):
+    settings: dict | None = None  # per-architecture options
+    hidden: bool | None = None  # hide from the model pickers
+    label: str | None = None  # added models only, from here on
+    group: str | None = None
+    stems: list[str] | None = None
+    note: str | None = None
+    best_for: list[str] | None = None
+    aliases: dict[str, str] | None = None
+
+
+class PathReq(BaseModel):
+    path: str
+
+
 class FlowRunReq(BaseModel):
     flow: flows.Flow
 
@@ -236,7 +267,7 @@ def create_app(store: Store | None = None) -> FastAPI:
             "notes": analysis.NOTE_NAMES,
             "separation": separation.status(),
             "device": separation.device_info() if separation.status()["available"] else None,
-            "models": separation.MODELS,
+            "models": [{**m, "hidden": m["id"] in models_registry.hidden()} for m in separation.models()],
             "tools": {k: {**{x: v[x] for x in ("label", "description", "for")}, "outputs": list(v["outputs"].values())}
                       for k, v in separation.TOOLS.items()},
         }
@@ -447,10 +478,13 @@ def create_app(store: Store | None = None) -> FastAPI:
         return get_settings()
 
     @app.get("/api/fs")
-    def list_folder(path: str | None = None):
-        """Folders and audio files at a path on this computer (for the folder picker)."""
+    def list_folder(path: str | None = None, ext: str | None = None):
+        """Folders and audio files at a path on this computer (for the folder picker).
+        ext: list these file types instead, e.g. ".ckpt,.yaml" (picking a model file)."""
+        exts = {e.strip().lower() if e.strip().startswith(".") else f".{e.strip().lower()}"
+                for e in ext.split(",") if e.strip()} if ext else None
         try:
-            return workflows.list_dir(path)
+            return workflows.list_dir(path, exts)
         except ValueError as e:
             raise HTTPException(400, str(e))
 
@@ -502,6 +536,82 @@ def create_app(store: Store | None = None) -> FastAPI:
         job.detail = {"output": str(out_root), "workflow": wf.name,
                       "songs": [{"file": str(f), "song": f.stem, "status": "queued", "message": ""} for f in files]}
         return asdict(job)
+
+    # ---------- models ----------
+
+    def model_or_404(mid: str) -> dict:
+        entry = next((m for m in models_registry.all_entries() if m["id"] == mid), None)
+        if entry is None:
+            raise HTTPException(404, f"unknown model: {mid}")
+        return entry
+
+    @app.get("/api/models")
+    def list_models():
+        return {"models": [models_registry.describe(m) for m in models_registry.all_entries()],
+                "folder": str(models_registry.model_dir()), "archs": models_registry.ARCHS,
+                "help": models_registry.HELP, "mdx_defaults": models_registry.MDX_MODEL_DATA}
+
+    @app.get("/api/models/catalog")
+    def model_catalog(refresh: bool = False):
+        mine = {m["id"] for m in models_registry.all_entries()}
+        here = {p.name for p in models_registry.model_dir().iterdir()}
+        return [{**c, "added": c["filename"] in mine, "downloaded": all(f in here for f in c["files"])}
+                for c in models_registry.catalog(refresh)]
+
+    @app.post("/api/models")
+    def add_model(req: AddModelReq):
+        try:
+            body = req.model_dump()
+            entry = (models_registry.add_from_catalog if req.source == "catalog" else models_registry.add_from_files)(body)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        return models_registry.describe(entry)
+
+    @app.post("/api/models/inspect")
+    def inspect_model_file(req: PathReq):
+        try:
+            return models_registry.inspect_file(req.path)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+
+    @app.patch("/api/models/{mid:path}")
+    def patch_model(mid: str, req: ModelPatchReq):
+        entry = model_or_404(mid)
+        try:
+            if req.settings is not None:
+                arch = entry.get("arch") or separation.arch_of(mid)
+                models_registry.set_settings(mid, arch, req.settings)
+            if req.hidden is not None:
+                models_registry.set_hidden(mid, req.hidden)
+            fields = {k: v for k, v in req.model_dump().items()
+                      if k in ("label", "group", "stems", "note", "best_for", "aliases") and v is not None}
+            if fields:
+                models_registry.update(mid, fields)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        return models_registry.describe(model_or_404(mid))
+
+    @app.delete("/api/models/{mid:path}/files")
+    def delete_model_files(mid: str):
+        model_or_404(mid)
+        return {"removed": models_registry.delete_downloads(mid)}
+
+    @app.post("/api/models/{mid:path}/download")
+    def download_model(mid: str):
+        model_or_404(mid)
+        st = separation.status()
+        if not st["available"]:
+            raise HTTPException(400, st["reason"])
+        return asdict(jobs.submit("download", "models", lambda job: models_registry.download(mid, job.update)))
+
+    @app.delete("/api/models/{mid:path}")
+    def remove_model(mid: str, files: bool = False):
+        model_or_404(mid)
+        try:
+            models_registry.remove(mid, delete_files=files)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        return {"ok": True}
 
     # ---------- node workflows ----------
 

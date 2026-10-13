@@ -44,7 +44,8 @@ export function WorkflowEditor({ meta, wf, onChange }: Props) {
   const modelStems = model?.stems ?? []
   const keep = modelStems.filter((s) => !wf.separate.stems || wf.separate.stems.includes(s))
   const tracks = producedTracks(meta, wf)
-  const groups = [...new Set(meta.models.map((m) => m.group ?? 'Models'))]
+  const offered = meta.models.filter((m) => !m.hidden || m.id === wf.separate.model)
+  const groups = [...new Set(offered.map((m) => m.group ?? 'Models'))]
   const toggleIn = (list: string[], x: string) => (list.includes(x) ? list.filter((y) => y !== x) : [...list, x])
   const exportCustom = Array.isArray(wf.export.stems)
 
@@ -56,7 +57,7 @@ export function WorkflowEditor({ meta, wf, onChange }: Props) {
           <select value={wf.separate.model} onChange={(e) => set('separate', { model: e.target.value, stems: null })}>
             {groups.map((g) => (
               <optgroup key={g} label={g}>
-                {meta.models.filter((m) => (m.group ?? 'Models') === g).map((m) => (
+                {offered.filter((m) => (m.group ?? 'Models') === g).map((m) => (
                   <option key={m.id} value={m.id}>{m.label}{m.note ? ` — ${m.note}` : ''}</option>
                 ))}
               </optgroup>

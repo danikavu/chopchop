@@ -169,6 +169,7 @@ export function BatchView({ meta, onOpenProject }: Props) {
         <button className="link" onClick={() => (location.hash = '')}>← Projects</button>
         <h1 className="title">Batch</h1>
         <button className="link" onClick={() => (location.hash = '#/workflows')}>Workflows</button>
+        <button className="link" onClick={() => (location.hash = '#/models')}>Models</button>
         <span className="muted">Run a workflow over a whole folder (e.g. an album → a drum kit per song)</span>
         <div className="spacer" />
         <Logo />

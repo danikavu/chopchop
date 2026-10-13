@@ -198,9 +198,16 @@ def device_info() -> dict:
 
 
 def model_dir() -> Path:
-    d = data_dir() / "models"
-    d.mkdir(parents=True, exist_ok=True)
-    return d
+    from .models import model_dir as d
+
+    return d()
+
+
+def models() -> list[dict]:
+    """Separation models: the built-in ones above plus the ones added on the Models page."""
+    from . import models as registry
+
+    return [*MODELS, *registry.added()]
 
 
 def stem_name(filename: str) -> str:
@@ -306,11 +313,33 @@ class _ProgressCapture:
 MDX_DEFAULTS = {"hop_length": 1024, "segment_size": 256, "overlap": 0.25, "batch_size": 1, "enable_denoise": False}
 MDXC_DEFAULTS = {"segment_size": 256, "override_model_segment_size": False, "batch_size": 1, "overlap": None,
                  "pitch_shift": 0}
+VR_DEFAULTS = {"batch_size": 1, "window_size": 512, "aggression": 5, "enable_tta": False, "enable_post_process": False,
+               "post_process_threshold": 0.2, "high_end_process": False}
+
+
+def _use_own_files(sep, info: dict) -> None:
+    """Point audio-separator at a model that isn't in its catalog: the files are already
+    in the models folder; MDXC reads its YAML config, MDX-Net gets its parameters
+    (UVR looks those up by file hash, which only works for UVR's own models)."""
+    from .models import ARCH_TYPE
+
+    arch = info["arch"]
+    path = str(model_dir() / info["id"])
+    config = info.get("config")
+    sep.download_model_files = lambda name: (name, ARCH_TYPE[arch], info["label"], path, config)
+    if arch == "mdx":
+        sep.load_model_data_using_hash = lambda _path: dict(info["mdx_params"])
 
 
 def arch_of(model: str) -> str:
-    """'demucs' (.yaml), 'mdx' (.onnx: MDX-Net) or 'mdxc' (.ckpt: Roformer, MDX23C)."""
-    return "demucs" if model.endswith(".yaml") else "mdx" if model.endswith(".onnx") else "mdxc"
+    """'demucs' (.yaml), 'mdx' (.onnx: MDX-Net), 'vr' (.pth: VR) or 'mdxc' (.ckpt:
+    Roformer, MDX23C). An added model says what it is."""
+    known = next((m.get("arch") for m in models() if m["id"] == model and m.get("arch")), None)
+    if known:
+        return known
+    if model.endswith(".yaml"):
+        return "demucs"
+    return "mdx" if model.endswith(".onnx") else "vr" if model.endswith(".pth") else "mdxc"
 
 
 def gpu_settings() -> dict:
@@ -418,14 +447,14 @@ def _device_label(sep) -> str:
 
 def _demucs_passes(sep, model: str) -> int:
     """Progress bars Demucs will run: shifts x models in the bag."""
-    bag = next((m.get("bag", 1) for m in MODELS if m["id"] == model), 1)
+    bag = next((m.get("bag", 1) for m in models() if m["id"] == model), 1)
     shifts = int(getattr(sep.model_instance, "shifts", 0) or 0) or 1
     return bag * shifts
 
 
 def _info(model: str) -> dict:
     """Catalogue entry for a model id (separation models and stem-tool models)."""
-    for m in MODELS:
+    for m in models():
         if m["id"] == model:
             return m
     for t in TOOLS.values():
@@ -438,20 +467,26 @@ def _run_model(src: Path, out_dir: Path, model: str, emit: Progress) -> dict[str
     """Run one audio-separator model on src; returns {stem name: file}. Caller holds _lock."""
     from audio_separator.separator import Separator
 
+    from . import models as registry
+
     out_dir.mkdir(parents=True, exist_ok=True)
-    is_demucs = model.endswith(".yaml")
+    arch = arch_of(model)
+    is_demucs = arch == "demucs"
     info = _info(model)
+    changed = registry.user_settings(model)  # set on the Models page
 
     def run(force_cpu: bool, batch: int | None, fp16: bool | None = None) -> list[str]:
         emit(0.02, "Preparing model (downloads on first use)…")
         tuning = gpu_tuning(model, force_cpu, batch, fp16)
         extra = {}
-        if tuning["arch"] != "demucs":  # Demucs: exactly audio-separator's defaults
+        if is_demucs:
+            # Demucs: exactly audio-separator's defaults, unless changed for this model.
+            if changed:
+                extra["demucs_params"] = registry.options_for(model, "demucs")
+        else:
             extra["use_autocast"] = tuning["fp16"]
-            if tuning["arch"] == "mdx":
-                extra["mdx_params"] = {**MDX_DEFAULTS, "batch_size": tuning["batch"]}
-            else:
-                extra["mdxc_params"] = {**MDXC_DEFAULTS, "batch_size": tuning["batch"]}
+            base = {"mdx": MDX_DEFAULTS, "mdxc": MDXC_DEFAULTS, "vr": VR_DEFAULTS}[arch]
+            extra[f"{arch}_params"] = {**base, **changed, "batch_size": tuning["batch"]}
         # onnxruntime prints "Skip loading CUDA and cuDNN DLLs since torch is imported."
         # on every start on Windows (harmless); pass through anything else it prints.
         printed = io.StringIO()
@@ -479,6 +514,8 @@ def _run_model(src: Path, out_dir: Path, model: str, emit: Progress) -> dict[str
         # Demucs' long convolutions exceed an MPS size limit; mps_long_conv computes
         # them in chunks (identical results, ~6x faster than CPU on an M-series Mac).
         gpu_fix = _mps_long_conv() if on_mps else contextlib.nullcontext()
+        if info.get("source") == "files":
+            _use_own_files(sep, info)
         with gpu_fix, _ProgressCapture(emit, device) as cap:
             sep.load_model(model_filename=model)
             cap.emit(SEPARATE[0], f"Model loaded · separating on {device}…")
@@ -565,7 +602,7 @@ def separate(src: Path, out_dir: Path, model: str, on_progress: Progress | None 
     if not st["available"]:
         raise SeparationUnavailable(st["reason"])
     entry = _info(model)
-    if not entry or entry not in MODELS:
+    if not entry or entry not in models():
         raise ValueError(f"unknown model: {model}")
     emit = on_progress or (lambda _p, _m: None)
 
@@ -659,7 +696,8 @@ def combine(stems: dict[str, Path], keep: list[str] | None, rest: bool, out_dir:
         return stems
     unknown = set(keep) - set(stems)
     if unknown:
-        raise ValueError(f"the model didn't produce: {', '.join(sorted(unknown))}")
+        raise ValueError(f"the model didn't produce: {', '.join(sorted(unknown))} (it made: {', '.join(stems)}). "
+                         "For a model you added, fix its stems or add a rename on the Models page")
     chosen = {name: path for name, path in stems.items() if name in keep}
     others = [path for name, path in stems.items() if name not in keep]
     if rest and others:

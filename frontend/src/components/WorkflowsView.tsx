@@ -224,6 +224,7 @@ function Workflows({ meta, onOpenProject }: { meta: Meta; onOpenProject: (pid: s
         <button className="link" onClick={() => (location.hash = '')}>← Projects</button>
         <b className="title">Workflows</b>
         <button className="link" onClick={() => (location.hash = '#/batch')}>Batch</button>
+        <button className="link" onClick={() => (location.hash = '#/models')}>Models</button>
         <span className="flows-sep" />
       <select value={isSaved || presets.some((p) => p.name === name) ? name : ''} onChange={(e) => open(e.target.value)}>
         {!isSaved && !presets.some((p) => p.name === name) && <option value="">(unsaved) {name}</option>}

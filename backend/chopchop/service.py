@@ -61,7 +61,7 @@ class ChopChop:
         st = separation.status()
         if not st["available"]:
             raise ValueError(st["reason"])
-        info = next((m for m in separation.MODELS if m["id"] == model), None)
+        info = next((m for m in separation.models() if m["id"] == model), None)
         if info is None:
             raise ValueError(f"unknown model: {model}")
         unknown = set(stems or []) - set(info["stems"])
@@ -118,7 +118,7 @@ class ChopChop:
                          if rest else f"Keeping {', '.join(keep)}…")
             found = separation.combine(found, keep, rest, out)
             # Lanes in the model's usual order (vocals, drums, bass, …), remainder last.
-            order = next(m for m in separation.MODELS if m["id"] == model)["stems"]
+            order = next(m for m in separation.models() if m["id"] == model)["stems"]
             found = dict(sorted(found.items(), key=lambda kv: order.index(kv[0]) if kv[0] in order else 99))
             added: dict[str, str] = {}
             what = "Separate stems" if prefix == "" else f"Separate {src_track['name']}"

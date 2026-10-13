@@ -128,7 +128,7 @@ PRESETS: list[Workflow] = [
 def check(wf: Workflow) -> None:
     """Reject recipes that can't run, before a batch starts."""
     if wf.separate.enabled:
-        info = next((m for m in separation.MODELS if m["id"] == wf.separate.model), None)
+        info = next((m for m in separation.models() if m["id"] == wf.separate.model), None)
         if info is None:
             raise ValueError(f"unknown model: {wf.separate.model}")
         bad = set(wf.separate.stems or []) - set(info["stems"])
@@ -168,8 +168,9 @@ def delete(name: str) -> list[dict]:
 
 # ---------- input folders ----------
 
-def list_dir(path: str | None) -> dict:
-    """A folder's subfolders and audio files, for the folder picker."""
+def list_dir(path: str | None, exts: set[str] | None = None) -> dict:
+    """A folder's subfolders and audio files (or files with these extensions), for the
+    folder picker."""
     p = Path(path).expanduser() if path else Path.home()
     p = p.resolve()
     if not p.is_dir():
@@ -181,7 +182,7 @@ def list_dir(path: str | None) -> dict:
                 continue
             if e.is_dir():
                 dirs.append(e.name)
-            elif e.suffix.lower() in AUDIO_EXTS:
+            elif e.suffix.lower() in (exts or AUDIO_EXTS):
                 files.append(e.name)
     except PermissionError as e:
         raise ValueError(f"can't read {p}: permission denied") from e

@@ -74,7 +74,8 @@ export function FlowInspector({ type, params: p, meta, onChange, onDelete }: Pro
     const model = meta.models.find((m) => m.id === p.model)
     const all = model?.stems ?? []
     const picked = (p.stems as string[] | null) ?? all
-    const groups = [...new Set(meta.models.map((m) => m.group ?? 'Models'))]
+    const offered = meta.models.filter((m) => !m.hidden || m.id === p.model)
+    const groups = [...new Set(offered.map((m) => m.group ?? 'Models'))]
     const toggle = (s: string) => {
       const next = picked.includes(s) ? picked.filter((x) => x !== s) : [...picked, s]
       set({ stems: next.length === all.length ? null : all.filter((x) => next.includes(x)) })
@@ -86,7 +87,7 @@ export function FlowInspector({ type, params: p, meta, onChange, onDelete }: Pro
           <select value={p.model as string} onChange={(e) => set({ model: e.target.value, stems: null })}>
             {groups.map((g) => (
               <optgroup key={g} label={g}>
-                {meta.models.filter((m) => (m.group ?? 'Models') === g).map((m) => (
+                {offered.filter((m) => (m.group ?? 'Models') === g).map((m) => (
                   <option key={m.id} value={m.id}>{m.label}{m.note ? ` — ${m.note}` : ''}</option>
                 ))}
               </optgroup>

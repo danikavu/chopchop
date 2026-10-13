@@ -7,10 +7,12 @@ interface Props {
   start?: string
   onPick: (path: string) => void
   onClose: () => void
+  /** Pick a file with one of these extensions (e.g. ['.ckpt']) instead of a folder. */
+  files?: string[]
 }
 
 /** Browse folders on this computer (ChopChop runs locally) and pick one. */
-export function FolderPicker({ title, start, onPick, onClose }: Props) {
+export function FolderPicker({ title, start, onPick, onClose, files: pickFiles }: Props) {
   const [listing, setListing] = useState<FolderListing | null>(null)
   const [typed, setTyped] = useState(start ?? '')
   const [error, setError] = useState<string | null>(null)
@@ -22,7 +24,7 @@ export function FolderPicker({ title, start, onPick, onClose }: Props) {
     const n = ++latest.current
     setError(null)
     try {
-      const l = await api.listFolder(path)
+      const l = await api.listFolder(path, pickFiles)
       if (n !== latest.current) return
       setListing(l)
       setTyped(l.path)
@@ -57,17 +59,21 @@ export function FolderPicker({ title, start, onPick, onClose }: Props) {
                 📁 {d}
               </button>
             ))}
-            {listing.files.map((f) => (
+            {listing.files.map((f) => pickFiles ? (
+              <button key={f} className="picker-item file pickable" onClick={() => onPick(join(f))}>📄 {f}</button>
+            ) : (
               <div key={f} className="picker-item file">♪ {f}</div>
             ))}
             {!listing.dirs.length && !listing.files.length && <div className="muted picker-item">Empty folder</div>}
           </div>
         )}
         <div className="row">
-          <span className="muted">{listing ? `${listing.files.length} audio file${listing.files.length === 1 ? '' : 's'} here` : ''}</span>
+          <span className="muted">
+            {listing ? pickFiles ? `Click a ${pickFiles.join(' / ')} file` : `${listing.files.length} audio file${listing.files.length === 1 ? '' : 's'} here` : ''}
+          </span>
           <div className="spacer" />
           <button onClick={onClose}>Cancel</button>
-          <button className="primary" disabled={!listing} onClick={() => listing && onPick(listing.path)}>Use this folder</button>
+          {!pickFiles && <button className="primary" disabled={!listing} onClick={() => listing && onPick(listing.path)}>Use this folder</button>}
         </div>
       </div>
     </div>

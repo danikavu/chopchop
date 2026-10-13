@@ -141,7 +141,7 @@ def _plan(wf) -> list[str]:
 
     lines = []
     if wf.separate.enabled:
-        m = next((m for m in separation.MODELS if m["id"] == wf.separate.model), {"label": wf.separate.model})
+        m = next((m for m in separation.models() if m["id"] == wf.separate.model), {"label": wf.separate.model})
         keep = ", ".join(wf.separate.stems) if wf.separate.stems else "all stems"
         lines.append(f"separate with {m['label']} → keep {keep}{' (+ the rest mixed into one track)' if wf.separate.rest else ''}")
     for t in wf.tools:

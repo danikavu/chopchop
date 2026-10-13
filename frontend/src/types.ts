@@ -98,6 +98,61 @@ export interface Model {
   note?: string
   best_for?: string[]
   default?: boolean
+  hidden?: boolean  // hidden from the model pickers (Models page)
+}
+
+export type ModelArch = 'mdx' | 'mdxc' | 'vr' | 'demucs'
+export type Scores = Record<string, Record<string, number>>
+
+/** Everything the Models page shows for one model. */
+export interface ModelInfo extends Model {
+  arch: ModelArch | null  // null: two-stage (two models in a row)
+  arch_label: string
+  source: 'built-in' | 'catalog' | 'files'
+  builtin?: boolean
+  tool?: string  // a stem tool's model
+  stages?: string[]
+  aliases?: Record<string, string>
+  catalog_name?: string | null
+  scores: Scores
+  settings: Record<string, unknown> | null
+  changed: Record<string, unknown>
+  defaults: Record<string, unknown> | null
+  gpu: { batch: number; fp16: boolean; label: string } | null
+  perf: { runs: number; realtime: number | null; last_at: string; last_device: string; last_seconds: number; fallbacks: number } | null
+  files: { name: string; present: boolean; size: number | null }[]
+  downloaded: boolean
+  size: number
+  added_at?: string
+  config?: string
+  mdx_params?: Record<string, unknown>
+}
+
+export interface CatalogModel {
+  arch: ModelArch
+  name: string
+  filename: string
+  stems: string[]
+  target_stem: string | null
+  scores: Scores
+  files: string[]
+  added: boolean
+  downloaded: boolean
+}
+
+export interface AddModel {
+  source: 'catalog' | 'files'
+  filename?: string
+  arch?: 'mdxc' | 'mdx'
+  model_path?: string
+  config_path?: string
+  mdx_params?: Record<string, unknown>
+  label: string
+  group?: string
+  stems?: string[]
+  note?: string
+  best_for?: string[]
+  aliases?: Record<string, string>
 }
 
 export interface Meta {

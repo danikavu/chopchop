@@ -27,8 +27,9 @@ This page walks through the app screen by screen. For installing and running it,
 8. [The sample browser](#8-the-sample-browser)
 9. [Batch: a whole folder at once](#9-batch-a-whole-folder-at-once)
 10. [Workflows](#10-workflows)
-11. [Command line](#11-command-line)
-12. [Keyboard shortcuts](#keyboard-shortcuts)
+11. [Models](#11-models)
+12. [Command line](#12-command-line)
+13. [Keyboard shortcuts](#keyboard-shortcuts)
 
 ---
 
@@ -266,7 +267,35 @@ How it works:
 
 ---
 
-## 11. Command line
+## 11. Models
+
+![Models page](docs/screenshots/models.png)
+
+**Models** shows everything about each separation model:
+
+- what it makes, and what it's best at (★);
+- quality scores per stem;
+- its files, with sizes and whether they're downloaded;
+- how fast it runs on your computer;
+- every setting its architecture has.
+
+Changed settings apply every time the model runs, and **Reset to defaults** puts them
+back. **Download now** fetches a model ahead of time. **Delete files** frees the space,
+keeping any file another model shares. **Hide from the model pickers** keeps the lists
+short.
+
+**+ Add model** brings in more:
+
+- **From the catalog:** any of the ~170 UVR models audio-separator knows, with search,
+  architecture filters and quality scores.
+- **Your own files:** for example a new Roformer from Hugging Face (`.ckpt` + its `.yaml`;
+  the stems are read from the config), or an MDX-Net `.onnx` with its parameters.
+
+An added model appears in every model picker: separation, batch and workflows.
+
+---
+
+## 12. Command line
 
 The same workflows run from a terminal, without the browser:
 
