@@ -144,7 +144,7 @@ def outputs(node: FlowNode) -> dict[str, str]:
     if node.type == "input":
         return {"mix": "audio"}
     if node.type == "separate":
-        info = next((m for m in separation.MODELS if m["id"] == p.model), None)
+        info = next((m for m in separation.models() if m["id"] == p.model), None)
         if info is None:
             raise ValueError(f"unknown model: {p.model}")
         keep = [s for s in info["stems"] if p.stems is None or s in p.stems]

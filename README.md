@@ -314,6 +314,41 @@ restart. Runs are found in:
 The CLI's runs are included too. **Remove** / **Clear all** only hide runs from the list
 (remembered in `data/settings.json`). Their files stay on disk.
 
+### Models
+
+**Models** (top bar, or **Manage models →** under the model picker) lists every model:
+the separation models, the stem tools' models, and any you added.
+
+- **For each model:**
+  - what it makes, and the stems it's best for;
+  - its architecture (MDX-Net, MDX23C / Roformer, VR, Demucs) and its catalog name;
+  - quality scores per stem (SDR / SIR / SAR / ISR from audio-separator's benchmark);
+  - its files, with sizes and whether they're downloaded;
+  - its speed on this computer (runs, × realtime, last device, CPU fallbacks, from
+    `data/perf.log`);
+  - the GPU batch / precision `chopchop benchmark` picked.
+- **Settings:** every option audio-separator has for that architecture, used whenever the
+  model runs; **Reset to defaults** undoes them. Examples: segment size, overlap and
+  denoise (MDX-Net); segment size and pitch shift (Roformer); window size, aggression and
+  TTA (VR); shifts and segments (Demucs).
+- **Files:** **Download now** (they otherwise download on first use) and **Delete files**,
+  which keeps any file another model also uses.
+- **Hide from the model pickers** keeps the list short. Saved workflows that use a hidden
+  model still work.
+- **+ Add model:**
+  - **From the catalog:** any of the ~170 UVR models audio-separator can download.
+    Search, filter by architecture, and compare scores. The stems and "best for" are
+    pre-filled.
+  - **Your own files:** a model audio-separator doesn't list.
+    - A Roformer / MDX23C `.ckpt` with its `.yaml` config: the stems are read from the
+      config.
+    - An MDX-Net `.onnx`, with the parameters it was trained with (primary stem,
+      compensate, dim_f, dim_t, n_fft).
+    - The files are copied into `data/models/`.
+  - Either way, set its name, group, stems, best-for, a note, and renames for outputs the
+    model names differently (e.g. `other=instrumental`). An added model shows up in every
+    model picker (Separate, Batch, Workflows) and can be edited or removed later.
+
 ### Workflows: steps as a graph of nodes
 
 **Workflows** (top bar) is a node editor for chains that a fixed recipe can't express.
@@ -483,6 +518,7 @@ python scripts/run.py test   # pytest (synthetic drums/tones with known answers)
   - `analysis.py`: features, classification, note and key
   - `kits.py`: drum kits, sound bits, kit export
   - `separation.py`: audio-separator wrapper
+  - `models.py`: model registry (added models, per-model settings, files, catalog)
   - `workflows.py`: batch recipes and folder runs
   - `flows.py`: node workflows (graph check, run order, each node's step)
   - `store.py`: on-disk projects

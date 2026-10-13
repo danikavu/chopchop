@@ -4,6 +4,7 @@ import { api } from './api'
 import { BatchView } from './components/BatchView'
 import { StickerBackground } from './components/Brand'
 import { ProjectList } from './components/ProjectList'
+import { ModelsView } from './components/ModelsView'
 import { ProjectView } from './components/ProjectView'
 import type { Meta } from './types'
 import './styles.css'
@@ -20,6 +21,10 @@ function onBatchPage() {
   return location.hash.startsWith('#/batch')
 }
 
+function onModelsPage() {
+  return location.hash.startsWith('#/models')
+}
+
 function onWorkflowsPage() {
   return location.hash.startsWith('#/workflows')
 }
@@ -28,6 +33,7 @@ function App() {
   const [pid, setPid] = useState<string | null>(currentProject)
   const [batch, setBatch] = useState(onBatchPage)
   const [flows, setFlows] = useState(onWorkflowsPage)
+  const [modelsPage, setModelsPage] = useState(onModelsPage)
   const [meta, setMeta] = useState<Meta | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -37,6 +43,7 @@ function App() {
       setPid(currentProject())
       setBatch(onBatchPage())
       setFlows(onWorkflowsPage())
+      setModelsPage(onModelsPage())
     }
     window.addEventListener('hashchange', onHash)
     return () => window.removeEventListener('hashchange', onHash)
@@ -45,6 +52,7 @@ function App() {
   let page
   if (error) page = <div className="center error">{error}</div>
   else if (!meta) page = <div className="center muted">Loading…</div>
+  else if (modelsPage) page = <ModelsView meta={meta} onMetaChange={() => void api.meta().then(setMeta)} />
   else if (flows) page = (
     <Suspense fallback={<div className="center muted">Loading…</div>}>
       <WorkflowsView meta={meta} onOpenProject={(id) => (location.hash = `#/p/${id}`)} />

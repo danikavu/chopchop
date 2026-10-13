@@ -41,7 +41,9 @@ export function StemPicker({ meta, hasStems, onStart, onCancel, parts, onParts, 
   const [model, setModel] = useState(() => meta.models.find((m) => m.default)?.id ?? meta.models[0]?.id ?? '')
   const current = meta.models.find((m) => m.id === model)
   const stems = useMemo(() => current?.stems ?? [], [current])
-  const groups = [...new Set(meta.models.map((m) => m.group ?? 'Models'))]
+  // Models hidden on the Models page aren't offered (the chosen one always is).
+  const offered = meta.models.filter((m) => !m.hidden || m.id === model)
+  const groups = [...new Set(offered.map((m) => m.group ?? 'Models'))]
   const [picked, setPicked] = useState<string[]>(stems)
   const [rest, setRest] = useState(true)
   const [replace, setReplace] = useState(true)
@@ -59,7 +61,7 @@ export function StemPicker({ meta, hasStems, onStart, onCancel, parts, onParts, 
   // A model that's the best at every stem you kept (e.g. only vocals → Mel-Band Roformer).
   const better =
     !all && keep.length
-      ? meta.models.find((m) => m.id !== model && keep.every((s) => m.best_for?.includes(s)))
+      ? offered.find((m) => m.id !== model && keep.every((s) => m.best_for?.includes(s)))
       : undefined
 
   const pickModel = (id: string) => {
@@ -75,7 +77,7 @@ export function StemPicker({ meta, hasStems, onStart, onCancel, parts, onParts, 
         <select value={model} onChange={(e) => pickModel(e.target.value)}>
           {groups.map((g) => (
             <optgroup key={g} label={g}>
-              {meta.models.filter((m) => (m.group ?? 'Models') === g).map((m) => (
+              {offered.filter((m) => (m.group ?? 'Models') === g).map((m) => (
                 <option key={m.id} value={m.id}>
                   {m.label}{m.note ? ` — ${m.note}` : ''}
                 </option>
@@ -84,6 +86,8 @@ export function StemPicker({ meta, hasStems, onStart, onCancel, parts, onParts, 
           ))}
         </select>
       </label>
+      <button className="link manage-models" onClick={() => (location.hash = '#/models')}
+        title="See every model's files, quality, speed and settings, or add another">Manage models →</button>
 
       <div className="row presets">
         {presets.map((p) => (

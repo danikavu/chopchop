@@ -1,10 +1,13 @@
 import type {
   BatchJob,
   ExportResult,
+  AddModel,
+  CatalogModel,
   Flow,
   FolderListing,
   Job,
   Meta,
+  ModelInfo,
   Part,
   Project,
   ProjectSummary,
@@ -103,13 +106,27 @@ export const api = {
   job: (jid: string) => req<Job>('GET', `/api/jobs/${jid}`),
   cancelJob: (jid: string) => req('POST', `/api/jobs/${jid}/cancel`),
 
-  listFolder: (path?: string) => req<FolderListing>('GET', `/api/fs${path ? `?path=${enc(path)}` : ''}`),
+  listFolder: (path?: string, ext?: string[]) => {
+    const q = [path && `path=${enc(path)}`, ext?.length && `ext=${enc(ext.join(','))}`].filter(Boolean).join('&')
+    return req<FolderListing>('GET', `/api/fs${q ? `?${q}` : ''}`)
+  },
   workflows: () => req<{ presets: Workflow[]; saved: Workflow[]; default_output: string }>('GET', '/api/workflows'),
   saveWorkflow: (wf: Workflow) => req<{ saved: Workflow[] }>('PUT', '/api/workflows', wf),
   deleteWorkflow: (name: string) => req<{ saved: Workflow[] }>('DELETE', `/api/workflows/${enc(name)}`),
   startBatch: (body: { input_dir: string; files?: string[]; recursive: boolean; output_dir?: string; workflow?: Workflow; flow?: Flow }) =>
     req<BatchJob>('POST', '/api/batches', body),
   // scan: extra folders to look in for earlier runs (chopchop-batch.json)
+  models: () => req<{ models: ModelInfo[]; folder: string; archs: Record<string, string>; help: Record<string, string>;
+    mdx_defaults: Record<string, unknown> }>('GET', '/api/models'),
+  modelCatalog: (refresh = false) => req<CatalogModel[]>('GET', `/api/models/catalog${refresh ? '?refresh=true' : ''}`),
+  addModel: (body: AddModel) => req<ModelInfo>('POST', '/api/models', body),
+  inspectModelFile: (path: string) =>
+    req<{ name: string; size: number; kind: string; stems?: string[]; target?: string | null }>('POST', '/api/models/inspect', { path }),
+  patchModel: (id: string, body: Partial<Pick<ModelInfo, 'label' | 'group' | 'stems' | 'note' | 'best_for' | 'aliases' | 'hidden'>> & { settings?: Record<string, unknown> }) =>
+    req<ModelInfo>('PATCH', `/api/models/${enc(id)}`, body),
+  deleteModelFiles: (id: string) => req<{ removed: string[] }>('DELETE', `/api/models/${enc(id)}/files`),
+  downloadModel: (id: string) => req<Job>('POST', `/api/models/${enc(id)}/download`),
+  removeModel: (id: string, files = false) => req('DELETE', `/api/models/${enc(id)}${files ? '?files=true' : ''}`),
   flows: () => req<{ presets: Flow[]; saved: Flow[] }>('GET', '/api/flows'),
   saveFlow: (flow: Flow) => req<{ saved: Flow[] }>('PUT', '/api/flows', flow),
   deleteFlow: (name: string) => req<{ saved: Flow[] }>('DELETE', `/api/flows/${enc(name)}`),
