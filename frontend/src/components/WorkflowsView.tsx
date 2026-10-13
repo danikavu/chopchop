@@ -224,24 +224,53 @@ function Workflows({ meta, onOpenProject }: { meta: Meta; onOpenProject: (pid: s
         <button className="link" onClick={() => (location.hash = '')}>← Projects</button>
         <b className="title">Workflows</b>
         <button className="link" onClick={() => (location.hash = '#/batch')}>Batch</button>
+        <span className="flows-sep" />
+      <select value={isSaved || presets.some((p) => p.name === name) ? name : ''} onChange={(e) => open(e.target.value)}>
+        {!isSaved && !presets.some((p) => p.name === name) && <option value="">(unsaved) {name}</option>}
+        {saved.length > 0 && <optgroup label="Saved">{saved.map((f) => <option key={f.name} value={f.name}>{f.name}</option>)}</optgroup>}
+        <optgroup label="Examples">{presets.map((f) => <option key={f.name} value={f.name}>{f.name}</option>)}</optgroup>
+        <option value="__new">+ New workflow</option>
+      </select>
+      <input className="flow-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Workflow name" />
+      <button className="primary" onClick={() => void save()}>Save</button>
+      {isSaved && <button onClick={() => void remove()}>Delete</button>}
+      <span className={`flow-status ${problem ? 'bad' : 'ok'}`} title={problem ?? undefined}>
+        {problem ? `⚠ ${problem}` : `✓ ready · ${nodeCount} nodes`}
+      </span>
         <div className="spacer" />
         {notice && <span className="notice">{notice}</span>}
         <Logo />
       </header>
 
-      <div className="flows-bar">
-        <select value={isSaved || presets.some((p) => p.name === name) ? name : ''} onChange={(e) => open(e.target.value)}>
-          {!isSaved && !presets.some((p) => p.name === name) && <option value="">(unsaved) {name}</option>}
-          {saved.length > 0 && <optgroup label="Saved">{saved.map((f) => <option key={f.name} value={f.name}>{f.name}</option>)}</optgroup>}
-          <optgroup label="Examples">{presets.map((f) => <option key={f.name} value={f.name}>{f.name}</option>)}</optgroup>
-          <option value="__new">+ New workflow</option>
+      <div className="flows-bar flows-run">
+        <b>Run</b>
+        <select value={target} onChange={(e) => setTarget(e.target.value)} title="Project to run on (its mix is the Input track)">
+          {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
         </select>
-        <input className="flow-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Workflow name" />
-        <button className="primary" onClick={() => void save()}>Save</button>
-        {isSaved && <button onClick={() => void remove()}>Delete</button>}
-        <span className={`flow-status ${problem ? 'bad' : 'ok'}`} title={problem ?? undefined}>
-          {problem ? `⚠ ${problem}` : `✓ ready · ${nodeCount} nodes`}
-        </span>
+        <button className="primary" disabled={busy || !target || !!problem} onClick={() => void runOnProject()}>
+          {busy ? 'Running…' : 'Run on this project'}
+        </button>
+        <button disabled={!!problem} onClick={() => void runAsBatch()}
+          title="Saves the workflow, then opens Batch with it selected">
+          Run on a folder (batch)…
+        </button>
+        <label className="check" title="Batches: keep each song as a project to open and tweak later">
+          <input type="checkbox" checked={keepProjects} onChange={(e) => setKeepProjects(e.target.checked)} />
+          keep each song as a project
+        </label>
+        <div className="flows-run-out">
+          {busy && <JobProgress job={job} fallback="Starting…" />}
+          {!busy && result && (
+            <div className="result run-result">
+              <span>{result.files} files{result.samples ? ` · ${result.samples} bits` : ''} saved to</span>
+              <span className="path" title={result.output}>{`\u200e${result.output}\u200e`}</span>
+              <button className="link" onClick={() => void api.reveal(result.output)}>Show folder</button>
+              <button className="link" onClick={() => onOpenProject(target)}>Open project</button>
+              {result.warnings?.length > 0 && <span className="warn small" title={result.warnings.join('\n')}> · ⚠ {result.warnings.length}</span>}
+            </div>
+          )}
+          {!busy && error && <div className="error">{error}</div>}
+        </div>
       </div>
 
       <div className="flows-body">
@@ -287,37 +316,6 @@ function Workflows({ meta, onOpenProject }: { meta: Meta; onOpenProject: (pid: s
             <div className="flow-inspector"><p className="tip">Select a node to see all its options.</p></div>
           )}
 
-          <section className="flow-run">
-            <h3>Run</h3>
-            <label className="field">
-              <span>On project</span>
-              <select value={target} onChange={(e) => setTarget(e.target.value)}>
-                {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-              </select>
-            </label>
-            <button className="primary wide" disabled={busy || !target || !!problem} onClick={() => void runOnProject()}>
-              {busy ? 'Running…' : 'Run on this project'}
-            </button>
-            {busy && <JobProgress job={job} fallback="Starting…" />}
-            {result && (
-              <div className="result">
-                {result.files} files{result.samples ? ` · ${result.samples} bits` : ''} saved to{' '}
-                <span className="path" title={result.output}>{`\u200E${result.output}\u200E`}</span>{' '}
-                <button className="link" onClick={() => void api.reveal(result.output)}>Show folder</button>{' '}
-                <button className="link" onClick={() => onOpenProject(target)}>Open project</button>
-                {result.warnings?.length > 0 && <div className="warn small">{result.warnings.join(' · ')}</div>}
-              </div>
-            )}
-            <button className="wide" disabled={!!problem} onClick={() => void runAsBatch()}
-              title="Saves the workflow, then opens Batch with it selected">
-              Run on a folder (batch)…
-            </button>
-            <label className="check" title="Batches: keep each song as a project to open and tweak later">
-              <input type="checkbox" checked={keepProjects} onChange={(e) => setKeepProjects(e.target.checked)} />
-              Batch: keep each song as a project
-            </label>
-            {error && <div className="error">{error}</div>}
-          </section>
         </aside>
       </div>
     </div>

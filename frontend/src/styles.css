@@ -411,8 +411,23 @@ body { background: var(--bg); }
 /* ---------- Workflows (node editor) ---------- */
 .flows { display: flex; flex-direction: column; height: 100vh; }
 .flows-bar { display: flex; align-items: center; gap: 8px; padding: 8px 16px; border-bottom: 1px solid var(--line); background: var(--panel); }
-.flows-bar .flow-name { width: 360px; }
-.flow-status { font-size: 12px; margin-left: 8px; max-width: 520px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.flows .topbar .flow-name { width: 300px; }
+.flows .topbar select { max-width: 280px; }
+.flows-sep { width: 1px; align-self: stretch; background: var(--line); margin: 0 4px; }
+/* Run bar: everything about running, on one line under the top bar. */
+.flows-run { min-height: 46px; flex-wrap: nowrap; }
+.flows-run select { max-width: 200px; }
+.flows-run .check { white-space: nowrap; margin: 0; }
+.flows-run-out { flex: 1; min-width: 0; display: flex; align-items: center; }
+.flows-run-out > * { flex: 1; min-width: 0; margin: 0; }
+.flows-run-out .job { display: flex; align-items: center; gap: 10px; }
+.flows-run-out .job .progress { flex: 1; min-width: 0; height: 26px; }
+.flows-run-out .job .progress span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.flows-run-out .job-meta { display: flex; gap: 8px; white-space: nowrap; margin: 0; }
+.flows-run-out .run-result { padding: 4px 10px; display: flex; align-items: center; gap: 8px; white-space: nowrap; }
+.flows-run-out .run-result .path { flex: 1; min-width: 0; display: block; overflow: hidden; text-overflow: ellipsis; }
+.flows-run-out .error { padding: 4px 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.flow-status { font-size: 12px; margin-left: 4px; max-width: 380px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .flow-status.ok { color: var(--ok); }
 .flow-status.bad { color: var(--danger); }
 .flows-body { flex: 1; min-height: 0; display: grid; grid-template-columns: 190px 1fr 330px; }
