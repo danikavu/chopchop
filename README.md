@@ -9,7 +9,7 @@ Automatically extract drum kits, sound bits, loops, and chopped up vocals from t
 
 Slice tracks, stems (slice over multiple channels), and try out various parameters. 
 
-The best part is that you can automate everything with batch workflows.
+Most fire feature is that you can automate everything with batch workflows.
 
 - **Separate** a track into stems on your CPU/GPU.
 - **Slice** on the hits or the beat grid, and export the same chops from every stem.
@@ -96,3 +96,8 @@ python scripts/run.py test   # pytest (synthetic drums/tones with known answers)
   still fails on the GPU, separation retries on CPU.
 - Slice and sample positions are stored in seconds, so tracks with different sample rates
   line up.
+
+
+## Notes
+
+Made with the assistance of Claude Code, inspired by UVR.
