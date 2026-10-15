@@ -127,6 +127,8 @@ export const api = {
   deleteModelFiles: (id: string) => req<{ removed: string[] }>('DELETE', `/api/models/${enc(id)}/files`),
   downloadModel: (id: string) => req<Job>('POST', `/api/models/${enc(id)}/download`),
   removeModel: (id: string, files = false) => req('DELETE', `/api/models/${enc(id)}${files ? '?files=true' : ''}`),
+  importPresets: (data: unknown) =>
+    req<{ flows: string[]; workflows: string[]; renamed: Record<string, string> }>('POST', '/api/presets/import', data),
   flows: () => req<{ presets: Flow[]; saved: Flow[] }>('GET', '/api/flows'),
   saveFlow: (flow: Flow) => req<{ saved: Flow[] }>('PUT', '/api/flows', flow),
   deleteFlow: (name: string) => req<{ saved: Flow[] }>('DELETE', `/api/flows/${enc(name)}`),

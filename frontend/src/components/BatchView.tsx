@@ -6,6 +6,7 @@ import { Logo } from './Brand'
 import { useExportDir } from './ExportFolder'
 import { FolderPicker } from './FolderPicker'
 import { JobProgress } from './JobProgress'
+import { exportPreset, ImportPresetButton, importSummary } from './PresetFiles'
 import { WorkflowEditor } from './WorkflowEditor'
 
 interface Props {
@@ -40,6 +41,7 @@ export function BatchView({ meta, onOpenProject }: Props) {
   // Node workflows (made on the Workflows page) run here too, song by song.
   const [flows, setFlows] = useState<Flow[]>([])
   const [flow, setFlow] = useState<Flow | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
 
   useEffect(() => {
     api.workflows().then((r) => {
@@ -235,6 +237,31 @@ export function BatchView({ meta, onOpenProject }: Props) {
                   </optgroup>
                 )}
               </select>
+              <button onClick={() => (flow ?? wf) && exportPreset(flow ?? wf!)} disabled={!flow && !wf}
+                title="Save this workflow as a .chopchop.json file to share">Export</button>
+              <ImportPresetButton onError={setError}
+                onImported={(r) => {
+                  setError(null)
+                  setNotice(importSummary(r))
+                  void api.workflows().then((w) => {
+                    setSaved(w.saved)
+                    const recipe = w.saved.find((x) => x.name === r.workflows[0])
+                    if (!r.flows.length && recipe) {
+                      setFlow(null)
+                      setWf(clone(recipe))
+                      setBase(recipe.name)
+                    }
+                  })
+                  void api.flows().then((f) => {
+                    const all = [...f.saved, ...f.presets]
+                    setFlows(all)
+                    const picked = all.find((x) => x.name === r.flows[0])
+                    if (picked) {
+                      setFlow(picked)
+                      setBase(`flow:${picked.name}`)
+                    }
+                  })
+                }} />
               {isSaved && !flow && (
                 <button className="icon-btn" title="Delete this saved workflow" onClick={async () => {
                   const r = await api.deleteWorkflow(base)
@@ -243,6 +270,7 @@ export function BatchView({ meta, onOpenProject }: Props) {
                 }}>×</button>
               )}
             </div>
+            {notice && <div className="notice small">{notice}</div>}
             {flow ? (
               <>
                 {flow.description && <p className="tip">{flow.description}</p>}
