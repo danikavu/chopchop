@@ -17,6 +17,12 @@ The best part is that you can automate everything with batch workflows.
 - **Cut sound bits** (one-shots or phrases) from any stem, named with their key and tempo.
 - **Automate it:** batch a whole folder, or build node workflows.
 
+![Project view with stems, beat grid and 1-bar chops](docs/screenshots/project.png)
+
+![Sample browser](docs/screenshots/samples.png)
+
+![Workflow editor](docs/screenshots/workflows.png)
+
 ## Setup
 
 You need Python 3.10–3.13, Node 20.19+ (or 22.12+) and **ffmpeg** (for stem separation).
