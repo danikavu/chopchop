@@ -5,8 +5,9 @@
   </picture>
 </p>
 
-A local app for chopping music. Load a track, and ChopChop splits it into stems with UVR
-models. From there you can:
+With CHOPCHOP you can automatically (or manually..) slice full tracks, their stems and generate drum kits, sound bits, loops, and chopped up acapellas. But what is best is that you can automate everything with batch workflows. 
+
+
 
 - **Slice by peaks.** Detect hits on any stem and export the same slices from every stem, or
   only from the ones you pick.
@@ -17,6 +18,50 @@ models. From there you can:
 
 You can see the mix and all stems as waveforms, drag slice edges by hand, trim samples with
 sliders, and set the category and key of each sample before exporting a kit.
+
+## Setup
+
+Requirements: see [System requirements](#system-requirements). You need Python, Node
+and **ffmpeg** (for stem separation).
+
+The same commands work on macOS, Linux and Windows:
+
+```sh
+python scripts/run.py install   # .venv with the Python engine + audio-separator/PyTorch, and npm deps
+python scripts/run.py run       # builds the UI and opens http://127.0.0.1:8765
+```
+
+To install ffmpeg:
+
+- macOS: `brew install ffmpeg`
+- Windows: `winget install Gyan.FFmpeg`, then open a new terminal.
+- Linux: your package manager, e.g. `sudo apt install ffmpeg`.
+
+**GPU acceleration for stem separation.** `install` picks the right PyTorch build
+automatically:
+
+- **NVIDIA (Windows / Linux):** it detects the GPU with `nvidia-smi` and installs a CUDA
+  build of PyTorch that your driver supports. The default PyTorch download on Windows is
+  CPU-only.
+- **Apple Silicon:** uses the Metal GPU for every model, Demucs included (about 6× faster
+  than CPU).
+- **AMD / Intel on Windows:** `install --gpu directml` (experimental).
+- **Force CPU:** `install --gpu cpu`.
+
+The install ends by printing the device separation will use, and the app shows it on the
+**Separate stems** banner. If you installed before GPU support existed, just run
+`install` again.
+
+On Windows, use `py scripts\run.py …` if `python` isn't on your PATH. On macOS and Linux,
+`make install` / `make run` are shortcuts for the same commands.
+
+The first separation with each model downloads it into `data/models/`. Projects are stored
+in `data/projects/`. Set `CHOPCHOP_DATA=/some/path` to keep them somewhere else (the
+older `CHOPPER_*` variable names still work).
+
+If you don't need separation, `python scripts/run.py install --no-separation` installs a much
+lighter engine without PyTorch. You can then import stems you already have (e.g. from the UVR GUI) with
+**Import stems…**.
 
 ## System requirements
 
@@ -73,50 +118,6 @@ ChopChop uses.
 - **Disk:** PyTorch takes a few GB. Each separation model downloads once, on first use,
   and ranges from about 50 MB (Demucs) to several hundred MB (Roformer, MDX23C).
   Projects keep their stems and samples as WAV, so allow a few hundred MB per song.
-
-## Setup
-
-Requirements: see [System requirements](#system-requirements). You need Python, Node
-and **ffmpeg** (for stem separation).
-
-The same commands work on macOS, Linux and Windows:
-
-```sh
-python scripts/run.py install   # .venv with the Python engine + audio-separator/PyTorch, and npm deps
-python scripts/run.py run       # builds the UI and opens http://127.0.0.1:8765
-```
-
-To install ffmpeg:
-
-- macOS: `brew install ffmpeg`
-- Windows: `winget install Gyan.FFmpeg`, then open a new terminal.
-- Linux: your package manager, e.g. `sudo apt install ffmpeg`.
-
-**GPU acceleration for stem separation.** `install` picks the right PyTorch build
-automatically:
-
-- **NVIDIA (Windows / Linux):** it detects the GPU with `nvidia-smi` and installs a CUDA
-  build of PyTorch that your driver supports. The default PyTorch download on Windows is
-  CPU-only.
-- **Apple Silicon:** uses the Metal GPU for every model, Demucs included (about 6× faster
-  than CPU).
-- **AMD / Intel on Windows:** `install --gpu directml` (experimental).
-- **Force CPU:** `install --gpu cpu`.
-
-The install ends by printing the device separation will use, and the app shows it on the
-**Separate stems** banner. If you installed before GPU support existed, just run
-`install` again.
-
-On Windows, use `py scripts\run.py …` if `python` isn't on your PATH. On macOS and Linux,
-`make install` / `make run` are shortcuts for the same commands.
-
-The first separation with each model downloads it into `data/models/`. Projects are stored
-in `data/projects/`. Set `CHOPCHOP_DATA=/some/path` to keep them somewhere else (the
-older `CHOPPER_*` variable names still work).
-
-If you don't need separation, `python scripts/run.py install --no-separation` installs a much
-lighter engine without PyTorch. You can then import stems you already have (e.g. from the UVR GUI) with
-**Import stems…**.
 
 ## Using it
 
