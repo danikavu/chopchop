@@ -5,9 +5,13 @@
   </picture>
 </p>
 
-With CHOPCHOP you can automatically (or manually..) slice full tracks, their stems and generate drum kits, sound bits, loops, and chopped up acapellas. But what is best is that you can automate everything with batch workflows.
+Automatically extract drum kits, sound bits, loops, and chopped up vocals from tracks with CHOPCHOP. 
 
-- **Separate** a track into stems with UVR models (Demucs, Roformer, MDX-Net…), on your GPU.
+Slice tracks, stems (slice over multiple channels), and try out various parameters. 
+
+The best part is that you can automate everything with batch workflows.
+
+- **Separate** a track into stems on your CPU/GPU.
 - **Slice** on the hits or the beat grid, and export the same chops from every stem.
 - **Build drum kits** of the cleanest, most distinct hits, and play them on MPC-style pads.
 - **Cut sound bits** (one-shots or phrases) from any stem, named with their key and tempo.
