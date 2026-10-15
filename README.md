@@ -100,4 +100,4 @@ python scripts/run.py test   # pytest (synthetic drums/tones with known answers)
 
 ## Notes
 
-Made with the assistance of Claude Code, inspired by UVR.
+Made with the assistance of [Claude Code](https://claude.com/claude-code), inspired by [UVR (Ultimate Vocal Remover)](https://github.com/Anjok07/ultimatevocalremovergui).
