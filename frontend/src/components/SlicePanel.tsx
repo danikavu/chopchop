@@ -161,12 +161,6 @@ export function SlicePanel(p: Props) {
         <div className="stat">
           {shown.length} slice{shown.length === 1 ? '' : 's'} on {label(p.focused)}
           {own.length > 0 && <span className="muted"> ({own.length} only here)</span>}
-          {(p.onlyTrack ? own.length : p.slices.length) > 0 && (
-            <button className="link" onClick={() => p.onSlices(p.onlyTrack ? others : [], `Clear slices${where}`)}
-              title={p.onlyTrack ? `Clear the chops that are only on ${label(p.focused)}` : 'Clear every slice'}>
-              {p.onlyTrack ? 'clear these' : 'clear'}
-            </button>
-          )}
         </div>
         <p className="tip">
           Drag on a waveform to draw a slice · drag edges to adjust · drag a slice to scroll ·{' '}

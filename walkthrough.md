@@ -126,6 +126,7 @@ Every stem gets its own lane under the original mix, all on one timeline.
 - **Transport:**
   - play / pause, and which lane is playing (click a lane's name to switch);
   - **Grid** shows the red beat grid;
+  - **Clear chops** removes every chop (undoable);
   - **Loop** repeats the selected chop;
   - **Only <stem>** chops the focused stem alone;
   - **Split** / **Delete** for slices;
@@ -189,7 +190,7 @@ All of these can be undone.
 ![Chops on the vocals only](docs/screenshots/only-stem.png)
 
 Hold **⌥/Alt** while drawing or pressing **S**, or press **O** (or **Only <stem>**) to stay
-in that mode, where **Detect**, **Chop to grid** and **clear** also work on just the focused
+in that mode, where **Detect**, **Chop to grid** and **Clear chops** also work on just the focused
 stem. These chops have dashed edges and appear only on their stem's lane (on the vocals
 above). They export from that stem only, as `vocals_only_001.wav` …, so the shared chops keep
 their lined-up numbering. Removing the stem removes its chops.

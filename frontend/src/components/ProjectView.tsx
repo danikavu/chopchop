@@ -785,6 +785,22 @@ export function ProjectView({ pid, meta, onBack }: Props) {
               title={project.tempo?.beats.length ? 'Show / hide the beat grid lines' : 'Detect the tempo first (BPM at the top)'}>
               Grid
             </button>
+            {(() => {
+              // In "only this stem" mode: just the focused stem's own chops.
+              const only = onlyStem || altHeld
+              const gone = only ? slices.filter((x) => x.track === focused) : slices
+              return (
+                <button disabled={!gone.length}
+                  title={only ? `Clear the chops that are only on ${label(focused)} (undoable)` : 'Clear every chop (undoable)'}
+                  onClick={() => {
+                    if (isLooping()) stopChopLoop()
+                    setSlices(only ? slices.filter((x) => x.track !== focused) : [], only ? `Clear slices on ${focused} only` : 'Clear slices')
+                    setSelectedId(null)
+                  }}>
+                  {only ? `Clear ${label(focused)} chops` : 'Clear chops'}
+                </button>
+              )
+            })()}
             <button className={`grid-toggle ${loop ? 'on' : ''}`} onClick={toggleLoop}
               title="Loop the selected chop while it plays (L)">
               Loop
