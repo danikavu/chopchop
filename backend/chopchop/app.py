@@ -14,13 +14,14 @@ from pathlib import Path
 from typing import Literal
 from urllib.parse import quote
 
-from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
+from fastapi import Body, FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import analysis, audio, flows, kits, portions, separation, settings, slicing, tempo, transpose, workflows
 from . import models as models_registry
+from . import presets
 from .jobs import Job, JobRunner
 from .service import ChopChop
 from .store import PAD_SLOTS, ProjectNotFound, Store, find_sample, find_track, new_id, safe_name
@@ -507,6 +508,14 @@ def create_app(store: Store | None = None) -> FastAPI:
     @app.delete("/api/workflows/{name}")
     def delete_workflow(name: str):
         return {"saved": workflows.delete(name)}
+
+    @app.post("/api/presets/import")
+    def import_presets(data: dict | list = Body(...)):
+        """Import node workflows and batch recipes from an exported .chopchop.json."""
+        try:
+            return presets.import_presets(data)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
 
     @app.post("/api/batches")
     def start_batch(req: BatchReq):

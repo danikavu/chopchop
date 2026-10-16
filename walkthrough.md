@@ -327,7 +327,8 @@ Run a workflow over every track in a folder, e.g. a drum kit for each song of an
    stem) → **Analyse** (tempo, song key) → **Drum kit** (source, size, uniqueness) →
    **Sound bits** (stems, chops / phrases, how many) → **Export** (stems, original mix, kit,
    bits, BPM / key in names, normalize, also in C). You can keep each song as a project to
-   fine-tune later. [Node workflows](#10-workflows) are listed here too.
+   fine-tune later. [Node workflows](#10-workflows) are listed here too, and **Export** /
+   **Import…** [share presets](#sharing-workflows) as files.
 3. **Output folder:** it starts at your [export folder](#the-export-folder), and a folder you
    pick here becomes the new export folder. Each run gets its own folder, one subfolder per
    song (`stems/`, `kit/`, `samples/`), and a `chopchop-batch.json` summary.
@@ -380,6 +381,18 @@ How it works:
 Stems of a stem are named after it (`instrumental_drums`) and never replace existing tracks.
 New stems, chops and samples stay in the project, so you can keep working on them. **Save**
 keeps a workflow for later (`data/flows.json`); three examples are there to start from.
+
+### Sharing workflows
+
+**Export** saves the workflow as a `<name>.chopchop.json` file; **Import…** loads one, on the
+Workflows page or the Batch page. Both kinds of preset work (node workflows and batch
+recipes), as does a file holding several, or what `chopchop workflow NAME` prints:
+
+- A preset whose name is taken is imported as "<name> (imported)", never over yours.
+- Everything in the file is checked first, so a broken file imports nothing and says what's
+  wrong.
+- A preset using a model you don't have (one someone added on their machine) is refused,
+  naming the model: add it on the [Models](#11-models) page, then import again.
 
 ---
 

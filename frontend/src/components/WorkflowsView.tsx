@@ -11,6 +11,7 @@ import { useJob } from '../util'
 import { Logo } from './Brand'
 import { type CardData, FlowCard, FlowInspector } from './FlowInspector'
 import { JobProgress } from './JobProgress'
+import { exportPreset, ImportPresetButton, importSummary } from './PresetFiles'
 
 const nodeTypes = { card: FlowCard }
 const newId = () => Math.random().toString(16).slice(2, 10)
@@ -235,6 +236,17 @@ function Workflows({ meta, onOpenProject }: { meta: Meta; onOpenProject: (pid: s
       <input className="flow-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Workflow name" />
       <button className="primary" onClick={() => void save()}>Save</button>
       {isSaved && <button onClick={() => void remove()}>Delete</button>}
+      <button onClick={() => exportPreset(current())} title="Save this workflow as a .chopchop.json file to share">Export</button>
+      <ImportPresetButton onError={setError}
+        onImported={(r) => {
+          setError(null)
+          void api.flows().then((f) => {
+            setSaved(f.saved)
+            const first = f.saved.find((x) => x.name === r.flows[0])
+            if (first) load(first)
+          })
+          flash(importSummary(r) + (r.workflows.length ? ' · batch recipes are on the Batch page' : ''))
+        }} />
       <span className={`flow-status ${problem ? 'bad' : 'ok'}`} title={problem ?? undefined}>
         {problem ? `⚠ ${problem}` : `✓ ready · ${nodeCount} nodes`}
       </span>
