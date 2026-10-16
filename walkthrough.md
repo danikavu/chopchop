@@ -165,7 +165,8 @@ Slices are colour-coded so you can see where one chop ends and the next starts. 
 on every lane, so you can audition the same chop across all stems. Click one to play it, or
 use **← / →** to step through them. With **Loop** on (**L**), the selected chop keeps
 repeating, gaplessly and without a hint of the next chop. Space or Esc stops it, and
-turning Loop off lets the current pass finish. **Enter** saves the selected slice as a sample.
+turning Loop off lets the current pass finish. **Z** (or ⤢ by the zoom slider) zooms onto
+the chop, centred; press it again to go back to the view you had. **Enter** saves the selected slice as a sample.
 
 ### Fixing the beat grid
 
@@ -522,6 +523,7 @@ chopchop benchmark "path/to/a typical song.wav"     # or: python scripts/run.py 
 | <kbd>⌥/Alt</kbd> + drag, <kbd>⌥/Alt</kbd>+<kbd>S</kbd> | chop the focused stem only |
 | <kbd>O</kbd> | toggle "only this stem" mode |
 | <kbd>L</kbd> | toggle loop for the selected chop |
+| <kbd>Z</kbd> | zoom onto the looping / selected chop; again to zoom back |
 | <kbd>←</kbd> / <kbd>→</kbd> | step through slices and play them |
 | <kbd>Del</kbd> | delete the selected slice |
 | <kbd>Enter</kbd> | save the selected slice as a sample |

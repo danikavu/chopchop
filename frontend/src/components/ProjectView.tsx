@@ -392,6 +392,33 @@ export function ProjectView({ pid, meta, onBack }: Props) {
   }
   loopChopRef.current = playChop
 
+  // Z: zoom onto the looping / selected chop; Z again goes back to the view before.
+  const zoomBack = useRef<{ zoom: number; scroll: number; id: string } | null>(null)
+  const zoomToChop = () => {
+    const back = zoomBack.current
+    if (back && back.id === selectedRef.current) {
+      zoomBack.current = null
+      setZoom(back.zoom)
+      window.setTimeout(() => focusedLane()?.setScroll(back.scroll), 50)
+      return
+    }
+    const s = slicesRef.current.find((x) => x.id === selectedRef.current)
+    if (!s) {
+      flash('Select a chop first, then press Z to zoom onto it')
+      return
+    }
+    const width = Math.max(1, laneWidth - HEAD_W)
+    const z = Math.min(MAX_ZOOM, Math.max(fitZoom, (width * 0.8) / Math.max(0.01, s.end - s.start)))
+    // Hopping from one chop to the next keeps the way back to where you started.
+    zoomBack.current = { zoom: back?.zoom ?? zoomRef.current, scroll: back?.scroll ?? lastScroll.current, id: s.id }
+    setZoom(z)
+    // Scroll once the lanes have re-rendered at the new zoom: the chop centred.
+    window.setTimeout(() => {
+      const left = s.start * z - (width - (s.end - s.start) * z) / 2
+      focusedLane()?.setScroll(Math.max(0, left))
+    }, 50)
+  }
+
   function stopChopLoop() {
     stopLoop()
     setLooping(false)
@@ -520,6 +547,10 @@ export function ProjectView({ pid, meta, onBack }: Props) {
         case 'o':
         case 'O':
           setOnlyStem((v) => !v)
+          break
+        case 'z':
+        case 'Z':
+          zoomToChop()
           break
         case 'l':
         case 'L':
@@ -765,6 +796,8 @@ export function ProjectView({ pid, meta, onBack }: Props) {
             <button onClick={() => splitAtPlayhead()} title="Split / add slice at playhead (S · ⌥S on this stem only)">Split</button>
             <button onClick={deleteSelected} disabled={!selectedId} title="Delete selected slice (Del)">Delete</button>
             {selected && <span className="muted">{fmtTime(selected.start)} – {fmtTime(selected.end)}</span>}
+            <button onClick={zoomToChop} disabled={!selectedId}
+              title={zoomBack.current ? 'Back to the view before (Z)' : 'Zoom onto the looping / selected chop (Z)'}>⤢</button>
             <label className="zoom" title="Zoom">
               <span>zoom</span>
               <input type="range" min={0} max={1} step={0.001} value={isFinite(zoomPos) ? zoomPos : 0}

@@ -172,7 +172,7 @@ export function SlicePanel(p: Props) {
           Drag on a waveform to draw a slice · drag edges to adjust · drag a slice to scroll ·{' '}
           <kbd>Ctrl</kbd>/<kbd>⌘</kbd>+drag a slice to move it · click to play ·{' '}
           <kbd>S</kbd> split at playhead · <kbd>Del</kbd> delete · <kbd>Enter</kbd> save as sample ·{' '}
-          <kbd>←</kbd>/<kbd>→</kbd> step through slices · <kbd>L</kbd> loop the selected slice
+          <kbd>←</kbd>/<kbd>→</kbd> step through slices · <kbd>L</kbd> loop the selected slice · <kbd>Z</kbd> zoom onto it
         </p>
         <p className="tip">
           Hold <kbd>⌥/Alt</kbd> while drawing or pressing <kbd>S</kbd> to chop <b>only that stem</b> (dashed edges),
