@@ -96,6 +96,7 @@ export const api = {
   trackAudioUrl: (pid: string, name: string) => `${P(pid)}/tracks/${enc(name)}/audio`,
   trackWindowUrl: (pid: string, name: string, start: number, end: number) =>
     `${P(pid)}/tracks/${enc(name)}/window?start=${start}&end=${end}`,
+  trackOnsets: (pid: string, name: string) => req<{ onsets: number[] }>('GET', `${P(pid)}/tracks/${enc(name)}/onsets`),
   trackPeaks: (pid: string, name: string, n = 8000) =>
     req<{ duration: number; peaks: number[] }>('GET', `${P(pid)}/tracks/${enc(name)}/peaks?n=${n}`),
 

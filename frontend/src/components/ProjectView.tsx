@@ -96,6 +96,29 @@ export function ProjectView({ pid, meta, onBack }: Props) {
   const onlyRef = useRef(false)
   onlyRef.current = onlyStem || altHeld
   // Loop the selected chop while it plays (off by default, not remembered).
+  // S snaps to the nearest hit on the playing stem (taps land a little late); on by default.
+  const [smartSnap, setSmartSnapState] = useState(() => {
+    try {
+      return localStorage.getItem('chopchop.smartSnap') !== '0'
+    } catch {
+      return true
+    }
+  })
+  const smartSnapRef = useRef(smartSnap)
+  smartSnapRef.current = smartSnap
+  const setSmartSnap = (v: boolean) => {
+    setSmartSnapState(v)
+    try {
+      localStorage.setItem('chopchop.smartSnap', v ? '1' : '0')
+    } catch {
+      /* not remembered */
+    }
+  }
+  const onsets = useRef(new Map<string, number[]>()) // "track:file" -> hit times
+  // The slice the last S made while playing: it stays open until the next S (legato).
+  const tapRef = useRef<string | null>(null)
+  // ✋ Pan mode: a plain drag pans the view everywhere instead of drawing / moving.
+  const [panMode, setPanMode] = useState(false)
   const [loop, setLoop] = useState(false)
   const loopRef = useRef(false)
   loopRef.current = loop
@@ -330,8 +353,11 @@ export function ProjectView({ pid, meta, onBack }: Props) {
         if (s) loopChopRef.current?.(s)
       },
       onPlayState: (name: string, p: boolean) => {
-        if (name === focusedRef.current) setPlaying(p)
+        if (name !== focusedRef.current) return
+        setPlaying(p)
+        if (!p && tapRef.current) closeTapRef.current(lanes.current.get(name)?.getCurrentTime() ?? timeRef.current)
       },
+      onZoomWheel: (factor: number, x: number) => zoomWheelRef.current(factor, x),
       onScroll: (name: string, left: number) => {
         if (Math.abs(left - lastScroll.current) < 1) return
         lastScroll.current = left
@@ -391,6 +417,20 @@ export function ProjectView({ pid, meta, onBack }: Props) {
       .catch((e) => setError(`Couldn't loop that chop: ${(e as Error).message}`))
   }
   loopChopRef.current = playChop
+
+  /** Ctrl/⌘ + wheel (or a trackpad pinch): zoom, keeping the time under the cursor in place.
+   * x: the cursor's position in the waveform area, in pixels. */
+  const zoomWheel = (factor: number, x: number) => {
+    const z0 = zoomRef.current
+    const z = Math.min(MAX_ZOOM, Math.max(fitZoom, z0 * factor))
+    if (Math.abs(z - z0) < 1e-6) return
+    const at = (lastScroll.current + x) / z0
+    zoomRef.current = z
+    setZoom(z)
+    window.setTimeout(() => focusedLane()?.setScroll(Math.max(0, at * z - x)), 0)
+  }
+  const zoomWheelRef = useRef(zoomWheel)
+  zoomWheelRef.current = zoomWheel
 
   // Z: zoom onto the looping / selected chop; Z again goes back to the view before.
   const zoomBack = useRef<{ zoom: number; scroll: number; id: string } | null>(null)
@@ -466,8 +506,28 @@ export function ProjectView({ pid, meta, onBack }: Props) {
     [slices, trackNames],
   )
 
+  /** The hit nearest a tap on the focused stem: up to 150 ms before it (taps land late) or
+   * 50 ms after; the tap itself if there's none, or the hits aren't loaded yet. */
+  const snapToHit = (t: number) => {
+    const t0 = project?.tracks.find((x) => x.name === focusedRef.current)
+    const hits = t0 ? onsets.current.get(`${t0.name}:${t0.file}`) : undefined
+    let best = t
+    let gap = Infinity
+    for (const h of hits ?? []) {
+      if (h < t - 0.15 || h > t + 0.05) continue
+      if (Math.abs(h - t) < gap) {
+        gap = Math.abs(h - t)
+        best = h
+      }
+    }
+    return best
+  }
+
   const splitAtPlayhead = (only = onlyRef.current) => {
-    const t = snapRef.current ? snapTo(snapRef.current, timeRef.current) : timeRef.current
+    // The beat grid wins when "snap while editing" is on; else the nearest hit (smart slice).
+    const raw = timeRef.current
+    const t = snapRef.current ? snapTo(snapRef.current, raw) : smartSnapRef.current ? snapToHit(raw) : raw
+    const playing = focusedLane()?.isPlaying() ?? false
     const all = slicesRef.current
     const track = focusedRef.current
     // Only-this-stem splits work on the focused track's own chops, else on the shared ones.
@@ -476,18 +536,45 @@ export function ProjectView({ pid, meta, onBack }: Props) {
     const where = only ? ` on ${track} only` : ''
     const hit = cur.find((s) => s.start < t - 0.005 && s.end > t + 0.005)
     if (hit) {
+      // Splitting the slice the last tap opened is legato: it ends where this one starts.
       const right = { id: newId(), start: t, end: hit.end, ...own }
       setSlices([...all.filter((s) => s.id !== hit.id), { ...hit, end: t }, right], `Split slice${where}`)
       setSelectedId(right.id)
+      if (playing) tapRef.current = right.id
     } else {
       const next = cur.find((s) => s.start > t)
-      const end = Math.min(next ? next.start : t + 0.5, project?.duration ?? t + 0.5)
+      // While playing, a tapped slice stays open (to the next slice / the end) until the
+      // next tap ends it; stopped, it's a short default you can drag.
+      const duration = project?.duration ?? t + 0.5
+      const end = Math.min(next ? next.start : playing ? duration : t + 0.5, duration)
       if (end - t < 0.01) return
       const s = { id: newId(), start: t, end, ...own }
       setSlices([...all, s], `Add slice${where}`)
       setSelectedId(s.id)
+      tapRef.current = playing ? s.id : null
     }
   }
+
+  /** Playback stopped: the slice the last tap left open ends here. */
+  const closeTap = (at: number) => {
+    const id = tapRef.current
+    tapRef.current = null
+    const s = slicesRef.current.find((x) => x.id === id)
+    if (s && at > s.start + 0.01 && at < s.end - 0.005) {
+      setSlices(slicesRef.current.map((x) => (x.id === id ? { ...x, end: at } : x)), 'End slice at stop')
+    }
+  }
+  const closeTapRef = useRef(closeTap)
+  closeTapRef.current = closeTap
+
+  // Hits of the focused stem, for smart slicing (fetched once per track file).
+  const focusedTrack = project?.tracks.find((x) => x.name === focused)
+  useEffect(() => {
+    if (!focusedTrack) return
+    const key = `${focusedTrack.name}:${focusedTrack.file}`
+    if (onsets.current.has(key)) return
+    api.trackOnsets(pid, focusedTrack.name).then((r) => onsets.current.set(key, r.onsets)).catch(() => undefined)
+  }, [pid, focusedTrack?.name, focusedTrack?.file]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const deleteSelected = () => {
     if (isLooping()) stopChopLoop()
@@ -547,6 +634,10 @@ export function ProjectView({ pid, meta, onBack }: Props) {
         case 'o':
         case 'O':
           setOnlyStem((v) => !v)
+          break
+        case 'h':
+        case 'H':
+          setPanMode((v) => !v)
           break
         case 'z':
         case 'Z':
@@ -812,6 +903,10 @@ export function ProjectView({ pid, meta, onBack }: Props) {
             <button onClick={() => splitAtPlayhead()} title="Split / add slice at playhead (S · ⌥S on this stem only)">Split</button>
             <button onClick={deleteSelected} disabled={!selectedId} title="Delete selected slice (Del)">Delete</button>
             {selected && <span className="muted">{fmtTime(selected.start)} – {fmtTime(selected.end)}</span>}
+            <button className={`grid-toggle ${panMode ? 'on' : ''}`} onClick={() => setPanMode((v) => !v)}
+              title="Pan mode (H): drag anywhere to move the view left / right. Without it: Shift+drag, middle-button drag, or drag a slice. Ctrl/⌘+scroll zooms.">
+              ✋
+            </button>
             <button onClick={zoomToChop} disabled={!selectedId}
               title={zoomBack.current ? 'Back to the view before (Z)' : 'Zoom onto the looping / selected chop (Z)'}>⤢</button>
             <label className="zoom" title="Zoom">
@@ -832,6 +927,7 @@ export function ProjectView({ pid, meta, onBack }: Props) {
                 slices={laneSlices.get(t.name) ?? slices}
                 selectedId={selectedId}
                 focused={focused === t.name}
+                panMode={panMode}
                 exportChecked={exportTracks.includes(t.name)}
                 timeline={i === 0}
                 showScrollbar={i === tracks.length - 1}
@@ -970,6 +1066,8 @@ export function ProjectView({ pid, meta, onBack }: Props) {
               showGrid={showBeats}
               onShowGrid={setShowBeats}
               onlyTrack={onlyStem || altHeld}
+              smartSnap={smartSnap}
+              onSmartSnap={setSmartSnap}
               onDownbeat={async (downbeat) => {
                 try {
                   const tempo = await api.setTempo(pid, { downbeat })

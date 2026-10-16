@@ -159,8 +159,15 @@ The **Slice** tab offers three ways to chop:
   slice per cell, e.g. 1-bar loops. **Snap slices** moves every edge onto the grid, and
   **Snap while editing** does the same as you drag, draw or split.
 - **By hand:** drag on an empty part of a waveform to draw a slice, drag its edges to
-  resize it, and **Ctrl+drag** (or **⌘+drag**) it to move it. A plain drag on a slice scrolls
-  the view left and right instead. **S** splits at the playhead.
+  resize it, and **Ctrl+drag** (or **⌘+drag**) it to move it. **S** splits at the playhead.
+- **Tapping along:** press **S** in time while the track plays. Each slice runs until your
+  next tap (legato), and the last one ends where you stop. **Smart slice** (on by default,
+  in the Slice panel) moves each tap onto the nearest hit on that stem, so taps don't have
+  to be precise: it looks up to 150 ms before the tap and 50 ms after.
+
+**Moving around when zoomed in:** drag a slice, **Shift+drag** or **middle-button drag**
+anywhere, or switch on **✋ pan mode** (**H**) so that every drag pans. Two-finger swipes and
+Shift+scroll move the view too, and **Ctrl/⌘+scroll** (or a pinch) zooms around the cursor.
 
 Slices are colour-coded so you can see where one chop ends and the next starts. They appear
 on every lane, so you can audition the same chop across all stems. Click one to play it, or
@@ -534,6 +541,9 @@ chopchop benchmark "path/to/a typical song.wav"     # or: python scripts/run.py 
 | <kbd>O</kbd> | toggle "only this stem" mode |
 | <kbd>L</kbd> | toggle loop for the selected chop |
 | <kbd>Z</kbd> | zoom onto the looping / selected chop; again to zoom back |
+| <kbd>H</kbd> | toggle pan mode (every drag pans the view) |
+| <kbd>Shift</kbd> + drag, middle-button drag | pan the view |
+| <kbd>Ctrl/⌘</kbd> + scroll | zoom around the cursor |
 | <kbd>←</kbd> / <kbd>→</kbd> | step through slices and play them |
 | <kbd>Del</kbd> | delete the selected slice |
 | <kbd>Enter</kbd> | save the selected slice as a sample |

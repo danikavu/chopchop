@@ -371,6 +371,21 @@ def create_app(store: Store | None = None) -> FastAPI:
         n = max(100, min(n, 50000))
         return {"duration": t["duration"], "peaks": audio.peaks(store.path(pid) / t["file"], n)}
 
+    onset_cache: dict[tuple[str, str], list[float]] = {}
+
+    @app.get("/api/projects/{pid}/tracks/{name}/onsets")
+    def track_onsets(pid: str, name: str):
+        """Every hit on a track (sensitive), for snapping slices tapped in by hand."""
+        t = track_or_404(get_project(pid), name)
+        key = (pid, t["file"])  # a new file (re-separated, trimmed) = new hits
+        if key not in onset_cache:
+            y, sr = audio.read_mono(store.path(pid) / t["file"], sr=None)
+            hits = slicing.detect_onsets(y, sr, sensitivity=0.6, min_gap=0.03, gate_db=-50)
+            if len(onset_cache) > 64:
+                onset_cache.pop(next(iter(onset_cache)))
+            onset_cache[key] = [round(float(x), 4) for x in hits]
+        return {"onsets": onset_cache[key]}
+
     @app.get("/api/projects/{pid}/tracks/{name}/window")
     def track_window(pid: str, name: str, start: float, end: float):
         t = track_or_404(get_project(pid), name)

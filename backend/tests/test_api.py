@@ -492,3 +492,11 @@ def test_pad_choke_groups(client):
     client.post(f"/api/projects/{pid}/undo")
     client.post(f"/api/projects/{pid}/undo")
     assert client.get(f"/api/projects/{pid}").json()["choke_all"] is False
+
+
+def test_track_onsets_for_snapping(client):
+    y, truth = synth.drum_loop(bars=2)
+    pid = new_project_with_drums(client, y)
+    hits = client.get(f"/api/projects/{pid}/tracks/drums/onsets").json()["onsets"]
+    assert len(hits) == len(truth) and max(abs(a - b) for a, b in zip(hits, truth)) < 0.02
+    assert client.get(f"/api/projects/{pid}/tracks/drums/onsets").json()["onsets"] == hits  # cached

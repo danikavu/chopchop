@@ -25,6 +25,8 @@ export interface LaneEvents {
   onPlaySlice?: (name: string, id: string) => void
   /** Clicked / dragged to a time on the waveform. */
   onSeek?: (name: string, t: number) => void
+  /** Ctrl/⌘ + wheel over the waveform: zoom by `factor` around `x` (px into the waveform). */
+  onZoomWheel?: (factor: number, x: number) => void
   onToggleExport: (name: string) => void
   onDelete?: (name: string) => void
   /** Stem tools (drum split, de-reverb, …), suitable ones listed first. */
@@ -40,6 +42,8 @@ interface Props extends LaneEvents {
   slices: Slice[]
   selectedId: string | null
   focused: boolean
+  /** Pan mode: a plain drag pans the view (instead of drawing / moving slices). */
+  panMode?: boolean
   exportChecked: boolean
   timeline: boolean
   showScrollbar: boolean
@@ -186,6 +190,68 @@ export function TrackLane(props: Props) {
   useEffect(() => {
     if (ready) wsRef.current?.zoom(zoom)
   }, [zoom, ready])
+
+  // Panning anywhere on the waveform: Shift+drag, middle-button drag, or any drag in pan
+  // mode. Caught before wavesurfer sees it (capture), so it neither draws a slice nor
+  // seeks; a click that ends a pan is swallowed too. Ctrl/⌘ + wheel zooms.
+  useEffect(() => {
+    const el = container.current
+    if (!el || !ready) return
+    let panned = false
+    const down = (e: PointerEvent) => {
+      const ws = wsRef.current
+      const pan = e.button === 1 || (e.button === 0 && (e.shiftKey || !!cb.current.panMode))
+      if (!pan || !ws) return
+      e.preventDefault()
+      e.stopPropagation()
+      panned = false
+      const x0 = e.clientX
+      const scroll0 = ws.getScroll()
+      el.style.cursor = 'grabbing'
+      const move = (m: PointerEvent) => {
+        if (Math.abs(m.clientX - x0) > 2) panned = true
+        ws.setScroll(Math.max(0, scroll0 - (m.clientX - x0)))
+      }
+      const up = () => {
+        el.style.cursor = cb.current.panMode ? 'grab' : ''
+        window.removeEventListener('pointermove', move)
+        window.removeEventListener('pointerup', up)
+        window.removeEventListener('pointercancel', up)
+      }
+      window.addEventListener('pointermove', move)
+      window.addEventListener('pointerup', up)
+      window.addEventListener('pointercancel', up)
+    }
+    const click = (e: MouseEvent) => {
+      if (!panned) return
+      panned = false
+      e.preventDefault()
+      e.stopPropagation()
+    }
+    const noAutoscroll = (e: MouseEvent) => {
+      if (e.button === 1) e.preventDefault() // middle button: pan, not the browser's autoscroll
+    }
+    const wheel = (e: WheelEvent) => {
+      if (!(e.ctrlKey || e.metaKey)) return // plain / Shift / sideways scrolling moves the view natively
+      e.preventDefault()
+      const x = e.clientX - el.getBoundingClientRect().left
+      cb.current.onZoomWheel?.(Math.exp(-e.deltaY * 0.01), x)
+    }
+    el.addEventListener('pointerdown', down, { capture: true })
+    el.addEventListener('click', click, { capture: true })
+    el.addEventListener('mousedown', noAutoscroll, { capture: true })
+    el.addEventListener('wheel', wheel, { passive: false })
+    return () => {
+      el.removeEventListener('pointerdown', down, { capture: true })
+      el.removeEventListener('click', click, { capture: true })
+      el.removeEventListener('mousedown', noAutoscroll, { capture: true })
+      el.removeEventListener('wheel', wheel)
+    }
+  }, [ready])
+
+  useEffect(() => {
+    if (container.current) container.current.style.cursor = props.panMode ? 'grab' : ''
+  }, [props.panMode])
 
   useEffect(() => {
     const regions = regionsRef.current

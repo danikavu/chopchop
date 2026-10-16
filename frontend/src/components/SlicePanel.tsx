@@ -33,6 +33,9 @@ interface Props {
   onShowGrid: (v: boolean) => void
   /** "Only this stem" mode: new chops belong to the focused track alone. */
   onlyTrack: boolean
+  /** S snaps to the nearest hit on the stem. */
+  smartSnap: boolean
+  onSmartSnap: (v: boolean) => void
 }
 
 const newId = () => Math.random().toString(16).slice(2, 12).padEnd(10, '0')
@@ -172,6 +175,13 @@ export function SlicePanel(p: Props) {
           Hold <kbd>⌥/Alt</kbd> while drawing or pressing <kbd>S</kbd> to chop <b>only that stem</b> (dashed edges),
           or press <kbd>O</kbd> to stay in that mode. Those chops export from that stem alone, as{' '}
           <code>{label(p.focused).toLowerCase()}_only_001…</code>
+        </p>
+        <label className="check" title="S lands a little late when you tap along: this moves each new slice to the nearest hit on the stem (up to 150 ms before the tap, 50 ms after). The beat grid wins when 'Snap while editing' is on.">
+          <input type="checkbox" checked={p.smartSnap} onChange={(e) => p.onSmartSnap(e.target.checked)} />
+          Smart slice: <kbd>S</kbd> snaps to the nearest hit
+        </label>
+        <p className="tip">
+          Tap <kbd>S</kbd> while it plays to chop along: each slice runs until the next tap (and ends where you stop).
         </p>
         <button className="wide" onClick={p.onSaveSelectedAsSample} disabled={!p.selectedId}>
           Save selected slice as sample
