@@ -383,7 +383,9 @@ How it works:
 
 Stems of a stem are named after it (`instrumental_drums`) and never replace existing tracks.
 New stems, chops and samples stay in the project, so you can keep working on them. **Save**
-keeps a workflow for later (`data/flows.json`); three examples are there to start from.
+keeps a workflow for later (`data/flows.json`). Four examples are there to start from,
+including **Starter Pack Kit**: a drum kit, sound bits, loops, vocal chops and the acapella
+from one track.
 
 ### Sharing workflows
 

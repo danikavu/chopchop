@@ -115,3 +115,11 @@ def test_save_and_delete_flows(env):
 def test_grid_points(step, expect):
     beats = [0.5 * i for i in range(8)]  # 8 beats, 120 BPM
     assert len(flows.grid_points(beats, step)) == expect
+
+
+def test_every_example_is_a_valid_workflow():
+    for f in flows.PRESETS:
+        flows.check(f)  # raises on a bad model, connection or loop
+    starter = next(f for f in flows.PRESETS if f.name == "Starter Pack Kit")
+    kinds = {n.type for n in starter.nodes}
+    assert {"separate", "tool", "kit", "bits", "slices", "save_stems", "save_samples", "save_slices"} <= kinds
