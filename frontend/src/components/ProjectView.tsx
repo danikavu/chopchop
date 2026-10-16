@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type WaveSurfer from 'wavesurfer.js'
 import { api, onHistory, type UndoState } from '../api'
+import { finishLoop, looping as isLooping, loopTime, startLoop, stopLoop } from '../loopEngine'
 import type { Job, Meta, Part, Project, Sample, Slice } from '../types'
 import { fmtTime, gridPoints, isDrumTrack, isTextEntry, label, snapTo, stopPreview, trackColor, useJob } from '../util'
 import { DrumPads } from './DrumPads'
@@ -98,6 +99,9 @@ export function ProjectView({ pid, meta, onBack }: Props) {
   const [loop, setLoop] = useState(false)
   const loopRef = useRef(false)
   loopRef.current = loop
+  // A chop looping right now (Web Audio, see loopEngine): drives the play button and playhead.
+  const [looping, setLooping] = useState(false)
+  const loopChopRef = useRef<((s: Slice) => void) | null>(null)
   const selectedRef = useRef<string | null>(null)
   selectedRef.current = selectedId
   // Selecting updates the ref at once: a chop clicked is played before React re-renders,
@@ -228,6 +232,7 @@ export function ProjectView({ pid, meta, onBack }: Props) {
     return () => {
       window.clearTimeout(saveTimer.current)
       stopPreview()
+      stopLoop()
     }
   }, [pid, reload, setSlices])
 
@@ -304,29 +309,28 @@ export function ProjectView({ pid, meta, onBack }: Props) {
       next.setTime(timeRef.current)
       if (wasPlaying) void next.play()
     }
+    // A chop looping on the old lane carries on, from the new lane's audio.
+    const s = isLooping() ? slicesRef.current.find((x) => x.id === selectedRef.current) : undefined
+    if (s && (!s.track || s.track === name)) loopChopRef.current?.(s)
+    else if (isLooping()) stopChopLoop()
   }, [])
 
   const laneEvents = useMemo(
     () => ({
       onFocus: setFocus,
       onTime: (name: string, t: number) => {
-        if (name !== focusedRef.current) return
+        if (name !== focusedRef.current || isLooping()) return // a loop drives the playhead itself
         setTime(t)
-        // Looping: crossing the chop's end jumps back to its start.
-        const s = loopTarget()
-        const ws = lanes.current.get(name)
-        if (s && ws?.isPlaying() && t >= s.end && t < s.end + 0.25) void ws.play(s.start, s.end)
+      },
+      onSeek: () => {
+        if (isLooping()) stopChopLoop() // clicked elsewhere on the waveform
+      },
+      onPlaySlice: (_name: string, id: string) => {
+        const s = slicesRef.current.find((x) => x.id === id)
+        if (s) loopChopRef.current?.(s)
       },
       onPlayState: (name: string, p: boolean) => {
-        if (name !== focusedRef.current) return
-        // A chop played to its end stops by itself: start it again (a pause elsewhere is the user's).
-        const s = !p ? loopTarget() : null
-        const ws = lanes.current.get(name)
-        if (s && ws && Math.abs(ws.getCurrentTime() - s.end) < 0.06) {
-          void ws.play(s.start, s.end)
-          return
-        }
-        setPlaying(p)
+        if (name === focusedRef.current) setPlaying(p)
       },
       onScroll: (name: string, left: number) => {
         if (Math.abs(left - lastScroll.current) < 1) return
@@ -371,13 +375,56 @@ export function ProjectView({ pid, meta, onBack }: Props) {
     return s && (!s.track || s.track === focusedRef.current) ? s : null
   }
 
+  /** Play a chop on the focused lane: looped (gapless, nothing past its end) in loop mode,
+   * once otherwise. */
+  const playChop = (s: Slice) => {
+    const ws = focusedLane()
+    if (!loopRef.current) {
+      stopChopLoop()
+      void ws?.play(s.start, s.end)
+      return
+    }
+    ws?.pause()
+    const url = api.trackWindowUrl(pid, focusedRef.current, s.start, s.end)
+    startLoop(url, s.start, () => setLooping(false))
+      .then((ok) => ok && setLooping(true))
+      .catch((e) => setError(`Couldn't loop that chop: ${(e as Error).message}`))
+  }
+  loopChopRef.current = playChop
+
+  function stopChopLoop() {
+    stopLoop()
+    setLooping(false)
+  }
+
+  /** Loop mode off while a chop loops: it finishes this pass, then stops. */
+  const toggleLoop = () => {
+    if (loopRef.current && isLooping()) finishLoop()
+    setLoop((v) => !v)
+  }
+
+  // While a chop loops, the playhead follows the loop (the lane itself is paused).
+  useEffect(() => {
+    if (!looping) return
+    let raf = 0
+    const tick = () => {
+      const t = loopTime()
+      if (t !== null) {
+        timeRef.current = t
+        setTime(t)
+      }
+      raf = requestAnimationFrame(tick)
+    }
+    raf = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(raf)
+  }, [looping])
+
   const togglePlay = () => {
+    if (isLooping()) return stopChopLoop()
     const ws = focusedLane()
     if (!ws) return
-    // Looping, with the playhead outside the selected chop: play the chop.
     const s = loopTarget()
-    const t = ws.getCurrentTime()
-    if (s && !ws.isPlaying() && (t < s.start || t >= s.end - 0.01)) void ws.play(s.start, s.end)
+    if (s && !ws.isPlaying()) playChop(s)
     else void ws.playPause()
   }
 
@@ -416,6 +463,7 @@ export function ProjectView({ pid, meta, onBack }: Props) {
   }
 
   const deleteSelected = () => {
+    if (isLooping()) stopChopLoop()
     if (!selectedId) return
     const cur = slicesRef.current
     const i = cur.findIndex((s) => s.id === selectedId)
@@ -434,7 +482,7 @@ export function ProjectView({ pid, meta, onBack }: Props) {
       const w = ws.getWidth()
       const x = next.start * zoom
       if (x < lastScroll.current || x > lastScroll.current + w - 40) ws.setScroll(Math.max(0, x - w / 3))
-      void ws.play(next.start, next.end)
+      playChop(next)
     }
   }
 
@@ -475,7 +523,7 @@ export function ProjectView({ pid, meta, onBack }: Props) {
           break
         case 'l':
         case 'L':
-          setLoop((v) => !v)
+          toggleLoop()
           break
         case ' ':
           e.preventDefault()
@@ -503,6 +551,7 @@ export function ProjectView({ pid, meta, onBack }: Props) {
           break
         case 'Escape':
           setSelectedId(null)
+          if (isLooping()) stopChopLoop()
           break
         case 'b':
         case 'B':
@@ -696,7 +745,7 @@ export function ProjectView({ pid, meta, onBack }: Props) {
       <div className="workspace">
         <div className="main-col">
           <div className="transport">
-            <button className="play" onClick={togglePlay} title="Play / pause (Space)">{playing ? '❚❚' : '▶'}</button>
+            <button className="play" onClick={togglePlay} title="Play / pause (Space)">{playing || looping ? '❚❚' : '▶'}</button>
             <span className="time">{fmtTime(time)}</span>
             <span className="muted">playing: <b style={{ color: trackColor(focused) }}>{label(focused)}</b></span>
             <div className="spacer" />
@@ -705,7 +754,7 @@ export function ProjectView({ pid, meta, onBack }: Props) {
               title={project.tempo?.beats.length ? 'Show / hide the beat grid lines' : 'Detect the tempo first (BPM at the top)'}>
               Grid
             </button>
-            <button className={`grid-toggle ${loop ? 'on' : ''}`} onClick={() => setLoop((v) => !v)}
+            <button className={`grid-toggle ${loop ? 'on' : ''}`} onClick={toggleLoop}
               title="Loop the selected chop while it plays (L)">
               Loop
             </button>

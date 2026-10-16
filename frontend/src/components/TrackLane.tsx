@@ -21,6 +21,10 @@ export interface LaneEvents {
   /** Drawn on this lane (the lane decides nothing: ProjectView picks shared / only-this-stem / part). */
   onSliceCreate: (start: number, end: number, track: string) => void
   onSelectSlice: (id: string | null) => void
+  /** A chop was clicked: play it (ProjectView decides how: once, or looped). */
+  onPlaySlice?: (name: string, id: string) => void
+  /** Clicked / dragged to a time on the waveform. */
+  onSeek?: (name: string, t: number) => void
   onToggleExport: (name: string) => void
   onDelete?: (name: string) => void
   /** Stem tools (drum split, de-reverb, …), suitable ones listed first. */
@@ -149,10 +153,12 @@ export function TrackLane(props: Props) {
           e.stopPropagation()
           cb.current.onFocus(track.name)
           cb.current.onSelectSlice(r.id)
-          void ws?.play(r.start, r.end)
+          if (cb.current.onPlaySlice) cb.current.onPlaySlice(track.name, r.id)
+          else void ws?.play(r.start, r.end)
         })
 
         ws.on('interaction', (t) => {
+          cb.current.onSeek?.(track.name, t)
           cb.current.onFocus(track.name)
           cb.current.onTime(track.name, t)
         })

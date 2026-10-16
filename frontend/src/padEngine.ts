@@ -4,12 +4,12 @@ let ctx: AudioContext | null = null
 const buffers = new Map<string, Promise<AudioBuffer>>()
 const chokeGroups = new Map<string, Set<AudioBufferSourceNode>>()
 
-function audioContext(): AudioContext {
+export function audioContext(): AudioContext {
   ctx ??= new AudioContext({ latencyHint: 'interactive' })
   return ctx
 }
 
-function load(url: string): Promise<AudioBuffer> {
+export function load(url: string): Promise<AudioBuffer> {
   let p = buffers.get(url)
   if (!p) {
     p = fetch(url)

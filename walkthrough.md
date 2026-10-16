@@ -164,7 +164,8 @@ The **Slice** tab offers three ways to chop:
 Slices are colour-coded so you can see where one chop ends and the next starts. They appear
 on every lane, so you can audition the same chop across all stems. Click one to play it, or
 use **← / →** to step through them. With **Loop** on (**L**), the selected chop keeps
-repeating. **Enter** saves the selected slice as a sample.
+repeating, gaplessly and without a hint of the next chop. Space or Esc stops it, and
+turning Loop off lets the current pass finish. **Enter** saves the selected slice as a sample.
 
 ### Fixing the beat grid
 
