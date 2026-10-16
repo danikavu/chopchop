@@ -515,3 +515,6 @@ body { background: var(--bg); }
 .catalog-name { font-weight: 600; }
 .catalog-pick { display: flex; flex-direction: column; gap: 10px; border: 1px solid var(--line); padding: 10px; }
 .picker-item.pickable { color: var(--text); }
+
+/* Choke group badge on a pad */
+.pad-choke { position: absolute; top: 7px; right: 30px; font-size: 10px; padding: 0 4px; border: 1px solid var(--accent); color: var(--accent); }

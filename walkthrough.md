@@ -164,7 +164,8 @@ The **Slice** tab offers three ways to chop:
 Slices are colour-coded so you can see where one chop ends and the next starts. They appear
 on every lane, so you can audition the same chop across all stems. Click one to play it, or
 use **← / →** to step through them. With **Loop** on (**L**), the selected chop keeps
-repeating, gaplessly and without a hint of the next chop. Space or Esc stops it, and
+repeating, gaplessly and without a hint of the next chop. Switching lanes while it loops
+carries on from the same point in the chop, on the new lane's audio. Space or Esc stops it, and
 turning Loop off lets the current pass finish. **Z** (or ⤢ by the zoom slider) zooms onto
 the chop, centred; press it again to go back to the view you had. **Enter** saves the selected slice as a sample.
 
@@ -279,6 +280,12 @@ The pads have 4 banks × 16, laid out like an MPC.
 - Each pad shows how often its sound occurs in the song (`×163`) and its note, if it has one.
 - **Playing:** click a pad, or use the keys on the pads, bottom row to top: **M , . /**,
   **J K L ;**, **U I O P**, **7 8 9 0**. A closed hat chokes a ringing open one.
+- **Choke:** like an MPC mute group, a hit cuts off sounds still ringing in its group.
+  - **Choke all**: every pad cuts every other, so only one sound plays at a time.
+  - **Per pad**: select a pad and pick a **choke group** (1–8); pads in the same group cut
+    each other (badge **C1**…). **Clear chokes** removes them all.
+  - Chokes fade out in a few milliseconds, so they don't click, and they're saved with the
+    project (and undoable).
 - **Loading:** drag a sample onto a pad, or select a pad and press ⊞ on a sample. Drag pads
   onto each other to swap them; right-click to clear.
 - **Export pads** writes `A01_kick_04.wav` … in pad order, with the same **→ C** option.

@@ -96,6 +96,8 @@ class KitReq(BaseModel):
 class PadsReq(BaseModel):
     pads: list[str | None]
     label: str | None = Field(None, max_length=60)
+    chokes: list[int | None] | None = None  # choke group per pad (1–8), unchanged if left out
+    choke_all: bool | None = None  # every pad chokes every other: one sound at a time
 
 
 class SampleCreateReq(BaseModel):
@@ -901,7 +903,13 @@ def create_app(store: Store | None = None) -> FastAPI:
             if unknown:
                 raise HTTPException(400, f"unknown samples: {unknown}")
             p["pads"] = list(req.pads)
-            return {"pads": p["pads"]}
+            if req.chokes is not None:
+                if len(req.chokes) != PAD_SLOTS or any(c is not None and not 1 <= c <= 8 for c in req.chokes):
+                    raise HTTPException(400, f"expected {PAD_SLOTS} choke groups, each 1–8 or none")
+                p["pad_chokes"] = list(req.chokes)
+            if req.choke_all is not None:
+                p["choke_all"] = req.choke_all
+            return {"pads": p["pads"], "pad_chokes": p.get("pad_chokes"), "choke_all": p.get("choke_all", False)}
 
     @app.delete("/api/projects/{pid}/samples/{sid}")
     def delete_sample(pid: str, sid: str):

@@ -28,6 +28,9 @@ interface Props {
   selectedPad: number | null
   onSelectPad: (i: number | null) => void
   onPadsChange: (pads: (string | null)[], label?: string) => void
+  chokes: (number | null)[]
+  chokeAll: boolean
+  onChokesChange: (chokes: (number | null)[], chokeAll: boolean, label: string) => void
   onKitBuilt: () => Promise<void>
 }
 
@@ -74,7 +77,9 @@ export function DrumPads(p: Props) {
       void el.offsetWidth // restart the flash animation
       el.classList.add('hit')
     }
-    if (s) void trigger(api.sampleAudioUrl(p.pid, s), chokeGroupFor(s.category)).catch((e) => setError(String(e)))
+    // Choke all > the pad's own group > the automatic one (a closed hat cuts an open hat).
+    const group = p.chokeAll ? 'all' : p.chokes[i] ? `group${p.chokes[i]}` : chokeGroupFor(s?.category ?? '')
+    if (s) void trigger(api.sampleAudioUrl(p.pid, s), group).catch((e) => setError(String(e)))
   }
 
   // Keyboard: play pads of the current bank.
@@ -175,6 +180,29 @@ export function DrumPads(p: Props) {
           ))}
         </div>
         <div className="spacer" />
+        <label className="check" title="Every pad cuts off the one still ringing: one sound at a time">
+          <input type="checkbox" checked={p.chokeAll}
+            onChange={(e) => p.onChokesChange(p.chokes, e.target.checked, e.target.checked ? 'Choke all pads' : 'Pads overlap')} />
+          Choke all
+        </label>
+        {p.selectedPad !== null && (
+          <label className="check" title="Pads in the same group cut each other off (like an MPC mute group)">
+            {BANKS[Math.floor(p.selectedPad / PADS_PER_BANK)]}{String((p.selectedPad % PADS_PER_BANK) + 1).padStart(2, '0')} choke
+            <select value={p.chokes[p.selectedPad] ?? ''} disabled={p.chokeAll}
+              onChange={(e) => {
+                const next = [...p.chokes]
+                next[p.selectedPad!] = e.target.value ? Number(e.target.value) : null
+                p.onChokesChange(next, p.chokeAll, 'Set choke group')
+              }}>
+              <option value="">off</option>
+              {[1, 2, 3, 4, 5, 6, 7, 8].map((g) => <option key={g} value={g}>group {g}</option>)}
+            </select>
+          </label>
+        )}
+        {p.chokes.some(Boolean) && !p.chokeAll && (
+          <button onClick={() => p.onChokesChange(p.chokes.map(() => null), false, 'Clear choke groups')}
+            title="Remove every pad's choke group">Clear chokes</button>
+        )}
         <ToCSelect samples={onPads} />
         <button onClick={exportPads} disabled={!p.pads.some(Boolean)}>Export pads</button>
         <button
@@ -231,6 +259,7 @@ export function DrumPads(p: Props) {
                   {String(n + 1).padStart(2, '0')}
                 </span>
                 <kbd className="pad-key">{PAD_KEYS[n].toUpperCase()}</kbd>
+                {!p.chokeAll && p.chokes[i] && <span className="pad-choke" title={`Choke group ${p.chokes[i]}`}>C{p.chokes[i]}</span>}
                 {s ? (
                   <>
                     <span className="pad-name">{s.name}</span>

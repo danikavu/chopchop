@@ -190,8 +190,9 @@ export const api = {
     req<{ duration: number; peaks: number[] }>('GET', `${P(pid)}/samples/${s.id}/peaks?n=${n}&v=${s.start}-${s.end}`),
   detectTempo: (pid: string, track?: string) => req<Tempo>('POST', `${P(pid)}/tempo`, { track }),
   setTempo: (pid: string, body: { bpm?: number; downbeat?: number; shift?: number; anchor?: number }) => req<Tempo>('PUT', `${P(pid)}/tempo`, body),
-  savePads: (pid: string, pads: (string | null)[], label?: string) =>
-    req<{ pads: (string | null)[] }>('PUT', `${P(pid)}/pads`, { pads, label }),
+  savePads: (pid: string, pads: (string | null)[], label?: string,
+    choke?: { chokes?: (number | null)[]; choke_all?: boolean }) =>
+    req<{ pads: (string | null)[] }>('PUT', `${P(pid)}/pads`, { pads, label, ...choke }),
   history: (pid: string) => req<UndoState>('GET', `${P(pid)}/history`),
   undo: (pid: string) => req<{ undone: string; project: Project }>('POST', `${P(pid)}/undo`),
   redo: (pid: string) => req<{ redone: string; project: Project }>('POST', `${P(pid)}/redo`),

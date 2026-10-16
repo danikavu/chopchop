@@ -11,6 +11,7 @@ const faded = new WeakSet<AudioBuffer>()
 
 interface Loop {
   source: AudioBufferSourceNode
+  gain: GainNode
   startedAt: number // context time the loop began
   length: number // seconds
   from: number // the chop's start in the track
@@ -34,10 +35,17 @@ function fade(buf: AudioBuffer) {
   }
 }
 
+const SWITCH_FADE_S = 0.005
+
 /** Loop `url` (the chop's audio, which starts at `from` seconds in the track). Resolves
- * once it plays; a newer start / stop meanwhile wins. onEnd: it stopped by itself. */
-export async function startLoop(url: string, from: number, onEnd: () => void): Promise<boolean> {
-  stopLoop()
+ * once it plays; a newer start / stop meanwhile wins. onEnd: it stopped by itself.
+ *
+ * keepPlace: the same chop from another track (switching lanes) — the old loop keeps
+ * playing until the new audio is ready, which then takes over at the same point in the
+ * chop, with a short crossfade, instead of from the top. */
+export async function startLoop(url: string, from: number, onEnd: () => void, keepPlace = false): Promise<boolean> {
+  const old = keepPlace && current && Math.abs(current.from - from) < 1e-6 ? current : null
+  if (!old) stopLoop()
   const mine = ++token
   const ctx = audioContext()
   if (ctx.state === 'suspended') await ctx.resume()
@@ -47,15 +55,29 @@ export async function startLoop(url: string, from: number, onEnd: () => void): P
   const source = ctx.createBufferSource()
   source.buffer = buf
   source.loop = true
-  source.connect(ctx.destination)
+  const gain = ctx.createGain()
+  source.connect(gain).connect(ctx.destination)
   source.onended = () => {
     if (current?.source === source) {
       current = null
       onEnd()
     }
   }
-  source.start()
-  current = { source, startedAt: ctx.currentTime, length: buf.duration, from, token: mine }
+  const now = ctx.currentTime
+  let offset = 0
+  if (old && current === old) {
+    offset = ((now - old.startedAt) % old.length) % buf.duration
+    gain.gain.setValueAtTime(0, now)
+    gain.gain.linearRampToValueAtTime(1, now + SWITCH_FADE_S)
+    old.source.onended = null
+    old.gain.gain.setValueAtTime(old.gain.gain.value, now)
+    old.gain.gain.linearRampToValueAtTime(0, now + SWITCH_FADE_S)
+    old.source.stop(now + SWITCH_FADE_S)
+  } else if (old) {
+    stopLoop() // the old one ended meanwhile
+  }
+  source.start(now, offset)
+  current = { source, gain, startedAt: now - offset, length: buf.duration, from, token: mine }
   return true
 }
 

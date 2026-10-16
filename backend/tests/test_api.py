@@ -470,3 +470,25 @@ def test_slices_on_one_track_only(client):
     client.delete(f"/api/projects/{pid}/tracks/vocals")
     left = client.get(f"/api/projects/{pid}").json()["slices"]
     assert not any(s.get("track") == "vocals" for s in left) and {"a", "b"} <= {s["id"] for s in left}
+
+
+def test_pad_choke_groups(client):
+    y, _ = synth.drum_loop(bars=1)
+    pid = new_project_with_drums(client, y)
+    p = client.get(f"/api/projects/{pid}").json()
+    assert p["pad_chokes"] == [None] * 64 and p["choke_all"] is False  # defaults, also for old projects
+    chokes = [None] * 64
+    chokes[0] = chokes[1] = 2
+    r = client.put(f"/api/projects/{pid}/pads", json={"pads": p["pads"], "chokes": chokes, "choke_all": True,
+                                                       "label": "Choke group"})
+    assert r.status_code == 200, r.text
+    p = client.get(f"/api/projects/{pid}").json()
+    assert p["pad_chokes"][:3] == [2, 2, None] and p["choke_all"] is True
+    # Left out = unchanged; bad values refused.
+    client.put(f"/api/projects/{pid}/pads", json={"pads": p["pads"]})
+    assert client.get(f"/api/projects/{pid}").json()["pad_chokes"][0] == 2
+    assert client.put(f"/api/projects/{pid}/pads", json={"pads": p["pads"], "chokes": [9] + [None] * 63}).status_code == 400
+    # Undoable like any pad edit.
+    client.post(f"/api/projects/{pid}/undo")
+    client.post(f"/api/projects/{pid}/undo")
+    assert client.get(f"/api/projects/{pid}").json()["choke_all"] is False

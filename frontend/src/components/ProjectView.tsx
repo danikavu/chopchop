@@ -101,7 +101,7 @@ export function ProjectView({ pid, meta, onBack }: Props) {
   loopRef.current = loop
   // A chop looping right now (Web Audio, see loopEngine): drives the play button and playhead.
   const [looping, setLooping] = useState(false)
-  const loopChopRef = useRef<((s: Slice) => void) | null>(null)
+  const loopChopRef = useRef<((s: Slice, keepPlace?: boolean) => void) | null>(null)
   const selectedRef = useRef<string | null>(null)
   selectedRef.current = selectedId
   // Selecting updates the ref at once: a chop clicked is played before React re-renders,
@@ -311,7 +311,7 @@ export function ProjectView({ pid, meta, onBack }: Props) {
     }
     // A chop looping on the old lane carries on, from the new lane's audio.
     const s = isLooping() ? slicesRef.current.find((x) => x.id === selectedRef.current) : undefined
-    if (s && (!s.track || s.track === name)) loopChopRef.current?.(s)
+    if (s && (!s.track || s.track === name)) loopChopRef.current?.(s, true) // same place in the chop
     else if (isLooping()) stopChopLoop()
   }, [])
 
@@ -377,7 +377,7 @@ export function ProjectView({ pid, meta, onBack }: Props) {
 
   /** Play a chop on the focused lane: looped (gapless, nothing past its end) in loop mode,
    * once otherwise. */
-  const playChop = (s: Slice) => {
+  const playChop = (s: Slice, keepPlace = false) => {
     const ws = focusedLane()
     if (!loopRef.current) {
       stopChopLoop()
@@ -386,7 +386,7 @@ export function ProjectView({ pid, meta, onBack }: Props) {
     }
     ws?.pause()
     const url = api.trackWindowUrl(pid, focusedRef.current, s.start, s.end)
-    startLoop(url, s.start, () => setLooping(false))
+    startLoop(url, s.start, () => setLooping(false), keepPlace)
       .then((ok) => ok && setLooping(true))
       .catch((e) => setError(`Couldn't loop that chop: ${(e as Error).message}`))
   }
@@ -856,6 +856,15 @@ export function ProjectView({ pid, meta, onBack }: Props) {
             selectedPad={selectedPad}
             onSelectPad={setSelectedPad}
             onPadsChange={setPads}
+            chokes={project.pad_chokes ?? project.pads.map(() => null)}
+            chokeAll={!!project.choke_all}
+            onChokesChange={(chokes, chokeAll, label) => {
+              setProject((p) => (p ? { ...p, pad_chokes: chokes, choke_all: chokeAll } : p))
+              api.savePads(pid, project.pads, label, { chokes, choke_all: chokeAll }).catch((e) => {
+                setError(`Saving choke groups failed: ${e.message}`)
+                void reload()
+              })
+            }}
             onKitBuilt={async () => {
               await reload()
               flash('Auto kit loaded onto the pads')
