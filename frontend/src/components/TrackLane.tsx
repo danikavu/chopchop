@@ -41,6 +41,47 @@ interface Props extends LaneEvents {
   showScrollbar: boolean
 }
 
+/** Pressing on a slice body: Ctrl / ⌘ + drag moves the slice; a plain drag scrolls the
+ * view left / right instead (the other lanes follow). Edges still resize with a plain drag.
+ * (⌘ too because Ctrl-click opens the context menu on a Mac.) */
+function grabSlice(r: ReturnType<Regions['addRegion']>, ws: WaveSurfer | null) {
+  const el = r.element
+  if (!el || !ws) return
+  el.style.cursor = 'grab'
+  el.addEventListener('contextmenu', (e) => {
+    if (e.ctrlKey) e.preventDefault()
+  })
+  el.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0 || (e.target as HTMLElement).closest?.('[part~="region-handle"]')) return
+    const move = e.ctrlKey || e.metaKey
+    r.setOptions({ drag: move }) // the plugin's own drag reads this on every move
+    el.style.cursor = 'grabbing'
+    if (move) {
+      const done = () => {
+        r.setOptions({ drag: false })
+        el.style.cursor = 'grab'
+        window.removeEventListener('pointerup', done)
+        window.removeEventListener('pointercancel', done)
+      }
+      window.addEventListener('pointerup', done)
+      window.addEventListener('pointercancel', done)
+      return
+    }
+    const x0 = e.clientX
+    const scroll0 = ws.getScroll()
+    const pan = (m: PointerEvent) => ws.setScroll(Math.max(0, scroll0 - (m.clientX - x0)))
+    const done = () => {
+      el.style.cursor = 'grab'
+      window.removeEventListener('pointermove', pan)
+      window.removeEventListener('pointerup', done)
+      window.removeEventListener('pointercancel', done)
+    }
+    window.addEventListener('pointermove', pan)
+    window.addEventListener('pointerup', done)
+    window.addEventListener('pointercancel', done)
+  })
+}
+
 export function TrackLane(props: Props) {
   const { pid, track, color, zoom, slices, selectedId, focused, exportChecked } = props
   const container = useRef<HTMLDivElement>(null)
@@ -155,11 +196,12 @@ export function TrackLane(props: Props) {
         start: s.start,
         end: s.end,
         color: withAlpha(hue, sel ? 0.42 : focused ? 0.17 : 0.11),
-        drag: true,
+        drag: false, // moving needs Ctrl / ⌘ (see grabSlice); a plain drag scrolls the view
         resize: true,
         minLength: 0.005,
       })
       if (r.element) {
+        grabSlice(r, wsRef.current)
         // Chops on this stem only: dashed edges, so they stand out from the shared ones.
         const line = s.track ? 'dashed' : 'solid'
         r.element.style.borderLeft = `1px ${line} ${withAlpha(hue, sel ? 1 : 0.75)}`

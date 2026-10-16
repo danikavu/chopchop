@@ -157,8 +157,9 @@ The **Slice** tab offers three ways to chop:
 - **Beat grid:** pick a step (1/16 up to 4 bars) and **Chop to grid**. That gives one
   slice per cell, e.g. 1-bar loops. **Snap slices** moves every edge onto the grid, and
   **Snap while editing** does the same as you drag, draw or split.
-- **By hand:** drag on any waveform to draw a slice, drag its edges or body to adjust it,
-  press **S** to split at the playhead.
+- **By hand:** drag on an empty part of a waveform to draw a slice, drag its edges to
+  resize it, and **Ctrl+drag** (or **⌘+drag**) it to move it. A plain drag on a slice scrolls
+  the view left and right instead. **S** splits at the playhead.
 
 Slices are colour-coded so you can see where one chop ends and the next starts. They appear
 on every lane, so you can audition the same chop across all stems. Click one to play it, or
