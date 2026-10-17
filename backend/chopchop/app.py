@@ -93,6 +93,13 @@ class KitReq(BaseModel):
     replace: bool = True
 
 
+class ToPadsReq(BaseModel):
+    mode: Literal["all", "auto"] = "all"
+    count: int = Field(16, ge=1, le=64)  # auto: how many to pick
+    start_pad: int = Field(0, ge=0, le=63)  # first pad to fill (0 = A01)
+    uniqueness: float = Field(0.9, ge=0.3, le=1)
+
+
 class PadsReq(BaseModel):
     pads: list[str | None]
     label: str | None = Field(None, max_length=60)
@@ -907,6 +914,19 @@ def create_app(store: Store | None = None) -> FastAPI:
             s = sample_or_404(p, sid)
             s.update(rec)
             return s
+
+    @app.post("/api/projects/{pid}/tracks/{name}/to-pads")
+    def slices_to_pads(pid: str, name: str, req: ToPadsReq):
+        """A track's slices onto the drum pads: all of them, or the most distinct (a job)."""
+        p = get_project(pid)
+        track_or_404(p, name)
+        if not any(not s.get("track") or s["track"] == name for s in p["slices"]):
+            raise HTTPException(400, f"no slices on {name}")
+
+        def work(job: Job):
+            return svc.slices_to_pads(pid, name, req.mode, req.count, req.start_pad, req.uniqueness, job.update)
+
+        return asdict(jobs.submit("to-pads", pid, work))
 
     @app.put("/api/projects/{pid}/pads")
     def put_pads(pid: str, req: PadsReq):

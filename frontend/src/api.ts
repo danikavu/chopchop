@@ -96,6 +96,8 @@ export const api = {
   trackAudioUrl: (pid: string, name: string) => `${P(pid)}/tracks/${enc(name)}/audio`,
   trackWindowUrl: (pid: string, name: string, start: number, end: number) =>
     `${P(pid)}/tracks/${enc(name)}/window?start=${start}&end=${end}`,
+  slicesToPads: (pid: string, name: string, body: { mode: 'all' | 'auto'; count: number; start_pad: number }) =>
+    req<Job>('POST', `${P(pid)}/tracks/${enc(name)}/to-pads`, body),
   trackOnsets: (pid: string, name: string) => req<{ onsets: number[] }>('GET', `${P(pid)}/tracks/${enc(name)}/onsets`),
   trackPeaks: (pid: string, name: string, n = 8000) =>
     req<{ duration: number; peaks: number[] }>('GET', `${P(pid)}/tracks/${enc(name)}/peaks?n=${n}`),

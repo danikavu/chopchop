@@ -500,3 +500,43 @@ def test_track_onsets_for_snapping(client):
     hits = client.get(f"/api/projects/{pid}/tracks/drums/onsets").json()["onsets"]
     assert len(hits) == len(truth) and max(abs(a - b) for a, b in zip(hits, truth)) < 0.02
     assert client.get(f"/api/projects/{pid}/tracks/drums/onsets").json()["onsets"] == hits  # cached
+
+
+def test_slices_to_pads(client):
+    y, truth = synth.drum_loop(bars=4)  # 8 kicks, 8 snares, 16 hats, all identical takes
+    pid = new_project_with_drums(client, y)
+    slices = client.post(f"/api/projects/{pid}/slices/detect", json={"track": "drums"}).json()["slices"]
+    assert len(slices) == len(truth)
+    send = lambda **body: wait(client, client.post(f"/api/projects/{pid}/tracks/drums/to-pads", json=body).json())  # noqa: E731
+
+    # All: every slice in time order from A01.
+    j = send(mode="all")
+    assert j["status"] == "done", j["error"]
+    assert (j["result"]["placed"], j["result"]["first"], j["result"]["last"]) == (32, "A01", "B16")
+    p = client.get(f"/api/projects/{pid}").json()
+    by_id = {s["id"]: s for s in p["samples"]}
+    starts = [by_id[x]["start"] for x in p["pads"][:32]]
+    assert starts == sorted(starts) and abs(starts[0] - slices[0]["start"]) < 1e-3
+
+    # Again: the same samples are reused, not duplicated.
+    assert send(mode="all")["result"]["made"] == 0
+    assert len(client.get(f"/api/projects/{pid}").json()["samples"]) == 32
+
+    # Auto: identical takes collapse to one each, laid out MPC-style. (A hat slice over a
+    # kick's tail sounds different from one over a snare's tail, so hats come twice.)
+    j = send(mode="auto", count=16)
+    assert j["result"]["placed"] == 4
+    p = client.get(f"/api/projects/{pid}").json()
+    by_id = {s["id"]: s for s in p["samples"]}
+    cats = {i: by_id[x]["category"] for i, x in enumerate(p["pads"][:16]) if x}
+    assert (cats[0], cats[4]) == ("kick", "snare") and set(cats) == {0, 4, 8, 12}  # kicks bottom row, then snares…
+    assert sum(by_id[p["pads"][i]]["occurrences"] for i in cats) == 32  # every slice is one of the 4 sounds
+    assert all(p["pads"][16:32])  # only the bank it fills is replaced: bank B keeps the earlier send
+
+    # From a chosen pad, in time order; one undo step puts the pads back.
+    j = send(mode="all", start_pad=20)
+    after = client.get(f"/api/projects/{pid}").json()["pads"]
+    assert j["result"]["first"] == "B05" and after[:20] == p["pads"][:20] and after[20] != p["pads"][20]
+    client.post(f"/api/projects/{pid}/undo")
+    assert client.get(f"/api/projects/{pid}").json()["pads"] == p["pads"]
+    assert client.post(f"/api/projects/{pid}/tracks/mix/to-pads", json={}).status_code == 200  # the mix has the shared slices too

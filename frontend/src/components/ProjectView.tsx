@@ -283,6 +283,35 @@ export function ProjectView({ pid, meta, onBack }: Props) {
   }, [duration])
 
   // Separation and stem tools share the progress banner.
+  // Slices → pads (a job: making the samples takes a moment).
+  const [padsJobId, setPadsJobId] = useState<string | null>(null)
+  const padsJob = useJob(padsJobId, (j: Job) => {
+    setPadsJobId(null)
+    if (j.status === 'error') setError(`Sending slices to pads failed: ${j.error}`)
+    else {
+      const r = j.result as { placed: number; first: string; last: string; of: number }
+      void reload()
+      flash(r.placed === 1 ? `1 slice on pad ${r.first}` : `${r.placed} of ${r.of} slices on pads ${r.first}–${r.last}`)
+    }
+  })
+  const PAD_COUNT = 64
+  const sendToPads = async (track: string, mode: 'all' | 'auto', count: number) => {
+    if (!project) return
+    const start = selectedPad ?? 0
+    // The pads it fills: from the start pad to the end of the last bank used.
+    const n = Math.min(count, PAD_COUNT - start)
+    const end = Math.min(PAD_COUNT, (Math.floor((start + n - 1) / 16) + 1) * 16)
+    const taken = project.pads.slice(start, end).filter(Boolean).length
+    if (taken && !window.confirm(`Replace what's on ${taken} pad${taken > 1 ? 's' : ''}? (You can undo it.)`)) return
+    setError(null)
+    try {
+      await flushSlices()
+      setPadsJobId((await api.slicesToPads(pid, track, { mode, count, start_pad: start })).id)
+    } catch (e) {
+      setError((e as Error).message)
+    }
+  }
+
   const sepJob = useJob(sepJobId, (j: Job) => {
     setSepJobId(null)
     const isTool = j.kind.startsWith('tool:')
@@ -858,6 +887,11 @@ export function ProjectView({ pid, meta, onBack }: Props) {
             flash('Workflow done')
           }} />
       )}
+      {padsJobId && (
+        <div className="banner">
+          <JobProgress job={padsJob} fallback="Sending slices to the pads…" />
+        </div>
+      )}
       {sepJobId && (
         <div className="banner">
           <JobProgress job={sepJob} steps={SEPARATION_STEPS} fallback="Starting separation…" />
@@ -928,6 +962,8 @@ export function ProjectView({ pid, meta, onBack }: Props) {
                 selectedId={selectedId}
                 focused={focused === t.name}
                 panMode={panMode}
+                onToPads={(track, mode, count) => void sendToPads(track, mode, count)}
+                padsFrom={`${'ABCD'[Math.floor((selectedPad ?? 0) / 16)]}${String(((selectedPad ?? 0) % 16) + 1).padStart(2, '0')}`}
                 exportChecked={exportTracks.includes(t.name)}
                 timeline={i === 0}
                 showScrollbar={i === tracks.length - 1}

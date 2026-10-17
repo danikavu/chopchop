@@ -27,6 +27,10 @@ export interface LaneEvents {
   onSeek?: (name: string, t: number) => void
   /** Ctrl/⌘ + wheel over the waveform: zoom by `factor` around `x` (px into the waveform). */
   onZoomWheel?: (factor: number, x: number) => void
+  /** Send this lane's slices to the drum pads: all, or the `count` most distinct. */
+  onToPads?: (track: string, mode: 'all' | 'auto', count: number) => void
+  /** Where they'd start, e.g. "A01" (the selected pad, else A01). */
+  padsFrom?: string
   onToggleExport: (name: string) => void
   onDelete?: (name: string) => void
   /** Stem tools (drum split, de-reverb, …), suitable ones listed first. */
@@ -104,6 +108,7 @@ export function TrackLane(props: Props) {
   const [ready, setReady] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [toolsOpen, setToolsOpen] = useState(false)
+  const [padsOpen, setPadsOpen] = useState(false)
 
   useEffect(() => {
     let ws: WaveSurfer | null = null
@@ -309,6 +314,29 @@ export function TrackLane(props: Props) {
                     }}>
                       <b>{t.label}</b>
                       <span className="muted">{t.description}{t.suggested ? '' : ' · meant for other stems'}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </span>
+          )}
+          {props.onToPads && (
+            <span className="lane-tools">
+              <button className="icon-btn" disabled={!slices.length} onClick={() => setPadsOpen((o) => !o)}
+                title={slices.length ? `Send this lane's ${slices.length} slices to the drum pads` : 'No slices on this lane yet'}>⊞</button>
+              {padsOpen && (
+                <div className="lane-menu" onMouseLeave={() => setPadsOpen(false)}>
+                  {([
+                    ['all', Math.min(slices.length, 64), `All ${slices.length} slices → pads`, `in time order, from ${props.padsFrom}${slices.length > 64 ? ' (the first 64 fit)' : ''}`],
+                    ['auto', 16, 'Auto-pick 16 → pads', 'the most distinct, cleanest slices; drums laid out kick / snare / hat'],
+                    ['auto', 32, 'Auto-pick 32 → pads', 'the same, two banks'],
+                  ] as const).map(([mode, count, text, note]) => (
+                    <button key={text} onClick={() => {
+                      setPadsOpen(false)
+                      props.onToPads?.(track.name, mode, count)
+                    }}>
+                      <b>{text}</b>
+                      <span className="muted">{note}</span>
                     </button>
                   ))}
                 </div>

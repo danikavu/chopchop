@@ -191,6 +191,92 @@ class ChopChop:
 
     # ---------- kits & sound bits ----------
 
+    def slices_to_pads(self, pid: str, track: str, mode: str = "all", count: int = 16, start_pad: int = 0,
+                       uniqueness: float = 0.9, progress: Progress = _quiet) -> dict:
+        """Put a track's slices (the shared ones plus its own) on the drum pads. One undo step.
+
+        all   every slice in time order, from start_pad on, as many as fit;
+        auto  the `count` most distinct, cleanest slices: near-identical ones are grouped
+              (like kit building) and one kept. A drum track gets the MPC layout (kicks on
+              the bottom row, …) when it starts at A01; anything else stays in time order.
+
+        Slices already made into samples this way are reused, not duplicated. The pads
+        from start_pad to the end of the last bank used are replaced."""
+        if mode not in ("all", "auto"):
+            raise ValueError("mode must be all or auto")
+        if not 0 <= start_pad < kits.PADS_PER_BANK * kits.BANKS:
+            raise ValueError("start_pad must be 0–63")
+        p = self.store.get(pid)
+        t = find_track(p, track)
+        folder = self.store.path(pid)
+        cuts = sorted((s for s in p["slices"] if (not s.get("track") or s["track"] == t["name"])
+                       and s["end"] - s["start"] > 0.005), key=lambda s: s["start"])
+        if not cuts:
+            raise ValueError(f"no slices on {t['name']}")
+        room = kits.PADS_PER_BANK * kits.BANKS - start_pad
+        drums = analysis.is_drum_track(t["name"])
+        counts: dict[str, int] = {}
+        if mode == "all":
+            chosen = cuts[:room]
+        else:
+            progress(0.05, f"Listening to {len(cuts)} slices…")
+            y, sr = audio.read_mono(folder / t["file"], sr=None)
+            ref = float(np.abs(y).max()) + 1e-12
+            cands = []
+            for i, s in enumerate(cuts):
+                a, b = int(s["start"] * sr), min(len(y), int(s["end"] * sr))
+                if b - a < int(0.01 * sr):
+                    continue
+                f = analysis.features(y[a:b], sr)
+                cat = analysis.classify_drum(f)[0] if drums else analysis.category_for_track(t["name"])
+                cands.append({"slice": s, "category": cat, "emb": analysis.embedding(f),
+                              "score": kits._quality(y, sr, a, b, ref)})
+                if i % 8 == 0:
+                    progress(0.05 + 0.45 * i / len(cuts), f"Listening to slice {i + 1}/{len(cuts)}…")
+            want = min(count, room)
+            reps = kits._dedupe(cands, uniqueness, want)
+            if drums:
+                reps = kits.select_kit(reps, want)
+            else:
+                reps = sorted(reps, key=kits._priority, reverse=True)[:want]
+            reps.sort(key=lambda r: r["slice"]["start"])
+            chosen = [r["slice"] for r in reps]
+            counts = {r["slice"]["id"]: r["count"] for r in reps}
+
+        progress(0.5, f"Making {len(chosen)} samples…")
+        new: dict[str, dict] = {}
+        made = 0
+        with self.store.edit(pid, f"Slices on {t['name']} → pads") as proj:
+            existing = {(s.get("track"), round(s["start"], 4), round(s["end"], 4)): s
+                        for s in proj["samples"] if s.get("origin") == "slice"}
+            for i, s in enumerate(chosen):
+                key = (t["name"], round(s["start"], 4), round(s["end"], 4))
+                sample = existing.get(key)
+                if sample is None:
+                    rec = kits.analyse_region(folder, t, s["start"], s["end"])
+                    rec.update({"track": t["name"], "start": key[1], "end": key[2], "origin": "slice", "score": None})
+                    sample = kits.save_sample(folder, proj, t, rec)
+                    made += 1
+                if s["id"] in counts:
+                    sample["occurrences"] = counts[s["id"]]
+                new[s["id"]] = sample
+                progress(0.5 + 0.45 * (i + 1) / len(chosen), f"Sample {i + 1}/{len(chosen)}")
+            samples = [new[s["id"]] for s in chosen]
+            if mode == "auto" and drums and start_pad == 0:
+                laid = kits.layout_pads(samples)
+            else:
+                laid = [None] * start_pad + [s["id"] for s in samples]
+                laid += [None] * (kits.PADS_PER_BANK * kits.BANKS - len(laid))
+            # Replace from start_pad to the end of the last bank used.
+            used = [i for i, x in enumerate(laid) if x]
+            last = (max(used) // kits.PADS_PER_BANK + 1) * kits.PADS_PER_BANK if used else start_pad
+            pads = list(proj["pads"])
+            pads[start_pad:last] = laid[start_pad:last]
+            proj["pads"] = pads
+        return {"placed": len(samples), "made": made, "of": len(cuts),
+                "first": kits.pad_label(min(used)) if used else None,
+                "last": kits.pad_label(max(used)) if used else None}
+
     def build_kit(self, pid: str, tracks: list[str], mode: str = "drums", sensitivity: float = 0.5,
                   similarity: float = 0.93, max_per_category: int = 8, kit_size: int | None = None,
                   load_pads: bool = False, replace: bool = True, progress: Progress = _quiet) -> list[dict]:

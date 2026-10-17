@@ -132,7 +132,16 @@ Every stem gets its own lane under the original mix, all on one timeline.
   - **Split** / **Delete** for slices;
   - the **zoom** slider.
 - **Lanes:** each lane has an **export** tick (include it when exporting slices), the
-  **✦** stem tools, and **×** to remove it.
+  **✦** stem tools, **⊞** to send its slices to the pads, and **×** to remove it.
+- **Slices → pads (⊞):** the lane's slices (the shared ones plus its own) become samples on
+  the drum pads, starting at the selected pad (or A01):
+  - **All N slices** in time order, as many as fit;
+  - **Auto-pick 16 / 32**: near-identical slices are grouped and the cleanest, most distinct
+    are kept (each pad shows how many slices it stands for); on a drum lane they're laid out
+    kick / snare / hat / perc.
+
+  It replaces the pads in the banks it fills (asking first if they're taken), reuses the
+  samples a previous send made, and undoes in one step.
 - **Stem tools (✦)** run on one stem and add new lanes, as one undo step each:
   - **Split drums** (MDX23C DrumSep) makes `drums_kick`, `drums_snare`, `drums_toms`,
     `drums_hihat`, `drums_ride` and `drums_crash`;
