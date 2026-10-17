@@ -1,0 +1,271 @@
+{
+ "kind": "flow",
+ "name": "Starter Pack Kit",
+ "description": "Get a drum kit, sound bits, loops, vocals chops and the acapella from the input track.",
+ "keep_projects": false,
+ "nodes": [
+  {
+   "id": "in",
+   "type": "input",
+   "params": {},
+   "x": -552,
+   "y": -32
+  },
+  {
+   "id": "separate-65f482c9",
+   "type": "separate",
+   "params": {
+    "model": "UVR-MDX-NET-Inst_HQ_4.onnx",
+    "stems": null,
+    "rest": false,
+    "debleed": true
+   },
+   "x": -286,
+   "y": -20
+  },
+  {
+   "id": "save_stems-2700e5fc",
+   "type": "save_stems",
+   "params": {
+    "folder": "stems",
+    "normalize": false,
+    "bpm_names": true,
+    "key_names": true
+   },
+   "x": 2,
+   "y": -64
+  },
+  {
+   "id": "save_samples-ac56c029",
+   "type": "save_samples",
+   "params": {
+    "folder": "vocal chops",
+    "normalize": true,
+    "bpm_names": true,
+    "to_c": "both",
+    "pad_names": false
+   },
+   "x": 267,
+   "y": 46
+  },
+  {
+   "id": "bits-f7f2ab82",
+   "type": "bits",
+   "params": {
+    "mode": "chops",
+    "sensitivity": 0.5,
+    "uniqueness": 0.9,
+    "max": 32
+   },
+   "x": 0,
+   "y": 11
+  },
+  {
+   "id": "separate-1c6a7ea2",
+   "type": "separate",
+   "params": {
+    "model": "htdemucs_6s.yaml",
+    "stems": [
+     "drums",
+     "bass",
+     "other"
+    ],
+    "rest": true,
+    "debleed": true
+   },
+   "x": -4,
+   "y": 122
+  },
+  {
+   "id": "tool-d8a9fc8f",
+   "type": "tool",
+   "params": {
+    "tool": "drumsep"
+   },
+   "x": 262,
+   "y": 119
+  },
+  {
+   "id": "bits-98fc18a4",
+   "type": "bits",
+   "params": {
+    "mode": "chops",
+    "sensitivity": 0.5,
+    "uniqueness": 0.9,
+    "max": 32
+   },
+   "x": 273,
+   "y": 380
+  },
+  {
+   "id": "save_samples-0d52b5aa",
+   "type": "save_samples",
+   "params": {
+    "folder": "sound bits",
+    "normalize": true,
+    "bpm_names": true,
+    "to_c": "both",
+    "pad_names": false
+   },
+   "x": 573,
+   "y": 405
+  },
+  {
+   "id": "kit-3b8fb92b",
+   "type": "kit",
+   "params": {
+    "sensitivity": 0.5,
+    "uniqueness": 0.93,
+    "max_per_type": 8,
+    "kit_size": 32,
+    "load_pads": true
+   },
+   "x": 541,
+   "y": 87
+  },
+  {
+   "id": "save_samples-3b4bd7c8",
+   "type": "save_samples",
+   "params": {
+    "folder": "drum kit",
+    "normalize": true,
+    "bpm_names": true,
+    "to_c": "none",
+    "pad_names": true
+   },
+   "x": 806,
+   "y": 124
+  },
+  {
+   "id": "slices-c31e5672",
+   "type": "slices",
+   "params": {
+    "mode": "detect",
+    "sensitivity": 0,
+    "min_gap": 0.08,
+    "max_len": null,
+    "gate_db": -40,
+    "grid_beats": 4
+   },
+   "x": 262,
+   "y": 501
+  },
+  {
+   "id": "save_slices-6eb1fd9e",
+   "type": "save_slices",
+   "params": {
+    "folder": "slices",
+    "fade_in_ms": 2,
+    "fade_out_ms": 8,
+    "normalize": true,
+    "bpm_names": true,
+    "key_names": true,
+    "skip_silent": true
+   },
+   "x": 534,
+   "y": 505
+  }
+ ],
+ "edges": [
+  {
+   "source": "in",
+   "port": "mix",
+   "target": "separate-65f482c9"
+  },
+  {
+   "source": "separate-65f482c9",
+   "port": "vocals",
+   "target": "save_stems-2700e5fc"
+  },
+  {
+   "source": "separate-65f482c9",
+   "port": "vocals",
+   "target": "bits-f7f2ab82"
+  },
+  {
+   "source": "bits-f7f2ab82",
+   "port": "samples",
+   "target": "save_samples-ac56c029"
+  },
+  {
+   "source": "separate-65f482c9",
+   "port": "instrumental",
+   "target": "separate-1c6a7ea2"
+  },
+  {
+   "source": "separate-1c6a7ea2",
+   "port": "drums",
+   "target": "tool-d8a9fc8f"
+  },
+  {
+   "source": "separate-1c6a7ea2",
+   "port": "bass",
+   "target": "bits-98fc18a4"
+  },
+  {
+   "source": "separate-1c6a7ea2",
+   "port": "other",
+   "target": "bits-98fc18a4"
+  },
+  {
+   "source": "bits-98fc18a4",
+   "port": "samples",
+   "target": "save_samples-0d52b5aa"
+  },
+  {
+   "source": "tool-d8a9fc8f",
+   "port": "kick",
+   "target": "kit-3b8fb92b"
+  },
+  {
+   "source": "tool-d8a9fc8f",
+   "port": "snare",
+   "target": "kit-3b8fb92b"
+  },
+  {
+   "source": "tool-d8a9fc8f",
+   "port": "toms",
+   "target": "kit-3b8fb92b"
+  },
+  {
+   "source": "tool-d8a9fc8f",
+   "port": "hihat",
+   "target": "kit-3b8fb92b"
+  },
+  {
+   "source": "tool-d8a9fc8f",
+   "port": "ride",
+   "target": "kit-3b8fb92b"
+  },
+  {
+   "source": "tool-d8a9fc8f",
+   "port": "crash",
+   "target": "kit-3b8fb92b"
+  },
+  {
+   "source": "kit-3b8fb92b",
+   "port": "samples",
+   "target": "save_samples-3b4bd7c8"
+  },
+  {
+   "source": "separate-1c6a7ea2",
+   "port": "rest",
+   "target": "bits-98fc18a4"
+  },
+  {
+   "source": "separate-1c6a7ea2",
+   "port": "other",
+   "target": "slices-c31e5672"
+  },
+  {
+   "source": "separate-1c6a7ea2",
+   "port": "rest",
+   "target": "slices-c31e5672"
+  },
+  {
+   "source": "slices-c31e5672",
+   "port": "slices",
+   "target": "save_slices-6eb1fd9e"
+  }
+ ]
+}

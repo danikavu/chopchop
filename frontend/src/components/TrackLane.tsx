@@ -21,6 +21,16 @@ export interface LaneEvents {
   /** Drawn on this lane (the lane decides nothing: ProjectView picks shared / only-this-stem / part). */
   onSliceCreate: (start: number, end: number, track: string) => void
   onSelectSlice: (id: string | null) => void
+  /** A chop was clicked: play it (ProjectView decides how: once, or looped). */
+  onPlaySlice?: (name: string, id: string) => void
+  /** Clicked / dragged to a time on the waveform. */
+  onSeek?: (name: string, t: number) => void
+  /** Ctrl/⌘ + wheel over the waveform: zoom by `factor` around `x` (px into the waveform). */
+  onZoomWheel?: (factor: number, x: number) => void
+  /** Send this lane's slices to the drum pads: all, or the `count` most distinct. */
+  onToPads?: (track: string, mode: 'all' | 'auto', count: number) => void
+  /** Where they'd start, e.g. "A01" (the selected pad, else A01). */
+  padsFrom?: string
   onToggleExport: (name: string) => void
   onDelete?: (name: string) => void
   /** Stem tools (drum split, de-reverb, …), suitable ones listed first. */
@@ -36,9 +46,52 @@ interface Props extends LaneEvents {
   slices: Slice[]
   selectedId: string | null
   focused: boolean
+  /** Pan mode: a plain drag pans the view (instead of drawing / moving slices). */
+  panMode?: boolean
   exportChecked: boolean
   timeline: boolean
   showScrollbar: boolean
+}
+
+/** Pressing on a slice body: Ctrl / ⌘ + drag moves the slice; a plain drag scrolls the
+ * view left / right instead (the other lanes follow). Edges still resize with a plain drag.
+ * (⌘ too because Ctrl-click opens the context menu on a Mac.) */
+function grabSlice(r: ReturnType<Regions['addRegion']>, ws: WaveSurfer | null) {
+  const el = r.element
+  if (!el || !ws) return
+  el.style.cursor = 'grab'
+  el.addEventListener('contextmenu', (e) => {
+    if (e.ctrlKey) e.preventDefault()
+  })
+  el.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0 || (e.target as HTMLElement).closest?.('[part~="region-handle"]')) return
+    const move = e.ctrlKey || e.metaKey
+    r.setOptions({ drag: move }) // the plugin's own drag reads this on every move
+    el.style.cursor = 'grabbing'
+    if (move) {
+      const done = () => {
+        r.setOptions({ drag: false })
+        el.style.cursor = 'grab'
+        window.removeEventListener('pointerup', done)
+        window.removeEventListener('pointercancel', done)
+      }
+      window.addEventListener('pointerup', done)
+      window.addEventListener('pointercancel', done)
+      return
+    }
+    const x0 = e.clientX
+    const scroll0 = ws.getScroll()
+    const pan = (m: PointerEvent) => ws.setScroll(Math.max(0, scroll0 - (m.clientX - x0)))
+    const done = () => {
+      el.style.cursor = 'grab'
+      window.removeEventListener('pointermove', pan)
+      window.removeEventListener('pointerup', done)
+      window.removeEventListener('pointercancel', done)
+    }
+    window.addEventListener('pointermove', pan)
+    window.addEventListener('pointerup', done)
+    window.addEventListener('pointercancel', done)
+  })
 }
 
 export function TrackLane(props: Props) {
@@ -55,6 +108,7 @@ export function TrackLane(props: Props) {
   const [ready, setReady] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [toolsOpen, setToolsOpen] = useState(false)
+  const [padsOpen, setPadsOpen] = useState(false)
 
   useEffect(() => {
     let ws: WaveSurfer | null = null
@@ -108,10 +162,12 @@ export function TrackLane(props: Props) {
           e.stopPropagation()
           cb.current.onFocus(track.name)
           cb.current.onSelectSlice(r.id)
-          void ws?.play(r.start, r.end)
+          if (cb.current.onPlaySlice) cb.current.onPlaySlice(track.name, r.id)
+          else void ws?.play(r.start, r.end)
         })
 
         ws.on('interaction', (t) => {
+          cb.current.onSeek?.(track.name, t)
           cb.current.onFocus(track.name)
           cb.current.onTime(track.name, t)
         })
@@ -140,6 +196,68 @@ export function TrackLane(props: Props) {
     if (ready) wsRef.current?.zoom(zoom)
   }, [zoom, ready])
 
+  // Panning anywhere on the waveform: Shift+drag, middle-button drag, or any drag in pan
+  // mode. Caught before wavesurfer sees it (capture), so it neither draws a slice nor
+  // seeks; a click that ends a pan is swallowed too. Ctrl/⌘ + wheel zooms.
+  useEffect(() => {
+    const el = container.current
+    if (!el || !ready) return
+    let panned = false
+    const down = (e: PointerEvent) => {
+      const ws = wsRef.current
+      const pan = e.button === 1 || (e.button === 0 && (e.shiftKey || !!cb.current.panMode))
+      if (!pan || !ws) return
+      e.preventDefault()
+      e.stopPropagation()
+      panned = false
+      const x0 = e.clientX
+      const scroll0 = ws.getScroll()
+      el.style.cursor = 'grabbing'
+      const move = (m: PointerEvent) => {
+        if (Math.abs(m.clientX - x0) > 2) panned = true
+        ws.setScroll(Math.max(0, scroll0 - (m.clientX - x0)))
+      }
+      const up = () => {
+        el.style.cursor = cb.current.panMode ? 'grab' : ''
+        window.removeEventListener('pointermove', move)
+        window.removeEventListener('pointerup', up)
+        window.removeEventListener('pointercancel', up)
+      }
+      window.addEventListener('pointermove', move)
+      window.addEventListener('pointerup', up)
+      window.addEventListener('pointercancel', up)
+    }
+    const click = (e: MouseEvent) => {
+      if (!panned) return
+      panned = false
+      e.preventDefault()
+      e.stopPropagation()
+    }
+    const noAutoscroll = (e: MouseEvent) => {
+      if (e.button === 1) e.preventDefault() // middle button: pan, not the browser's autoscroll
+    }
+    const wheel = (e: WheelEvent) => {
+      if (!(e.ctrlKey || e.metaKey)) return // plain / Shift / sideways scrolling moves the view natively
+      e.preventDefault()
+      const x = e.clientX - el.getBoundingClientRect().left
+      cb.current.onZoomWheel?.(Math.exp(-e.deltaY * 0.01), x)
+    }
+    el.addEventListener('pointerdown', down, { capture: true })
+    el.addEventListener('click', click, { capture: true })
+    el.addEventListener('mousedown', noAutoscroll, { capture: true })
+    el.addEventListener('wheel', wheel, { passive: false })
+    return () => {
+      el.removeEventListener('pointerdown', down, { capture: true })
+      el.removeEventListener('click', click, { capture: true })
+      el.removeEventListener('mousedown', noAutoscroll, { capture: true })
+      el.removeEventListener('wheel', wheel)
+    }
+  }, [ready])
+
+  useEffect(() => {
+    if (container.current) container.current.style.cursor = props.panMode ? 'grab' : ''
+  }, [props.panMode])
+
   useEffect(() => {
     const regions = regionsRef.current
     if (!ready || !regions) return
@@ -155,11 +273,12 @@ export function TrackLane(props: Props) {
         start: s.start,
         end: s.end,
         color: withAlpha(hue, sel ? 0.42 : focused ? 0.17 : 0.11),
-        drag: true,
+        drag: false, // moving needs Ctrl / ⌘ (see grabSlice); a plain drag scrolls the view
         resize: true,
         minLength: 0.005,
       })
       if (r.element) {
+        grabSlice(r, wsRef.current)
         // Chops on this stem only: dashed edges, so they stand out from the shared ones.
         const line = s.track ? 'dashed' : 'solid'
         r.element.style.borderLeft = `1px ${line} ${withAlpha(hue, sel ? 1 : 0.75)}`
@@ -195,6 +314,29 @@ export function TrackLane(props: Props) {
                     }}>
                       <b>{t.label}</b>
                       <span className="muted">{t.description}{t.suggested ? '' : ' · meant for other stems'}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </span>
+          )}
+          {props.onToPads && (
+            <span className="lane-tools">
+              <button className="icon-btn" disabled={!slices.length} onClick={() => setPadsOpen((o) => !o)}
+                title={slices.length ? `Send this lane's ${slices.length} slices to the drum pads` : 'No slices on this lane yet'}>⊞</button>
+              {padsOpen && (
+                <div className="lane-menu" onMouseLeave={() => setPadsOpen(false)}>
+                  {([
+                    ['all', Math.min(slices.length, 64), `All ${slices.length} slices → pads`, `in time order, from ${props.padsFrom}${slices.length > 64 ? ' (the first 64 fit)' : ''}`],
+                    ['auto', 16, 'Auto-pick 16 → pads', 'the most distinct, cleanest slices; drums laid out kick / snare / hat'],
+                    ['auto', 32, 'Auto-pick 32 → pads', 'the same, two banks'],
+                  ] as const).map(([mode, count, text, note]) => (
+                    <button key={text} onClick={() => {
+                      setPadsOpen(false)
+                      props.onToPads?.(track.name, mode, count)
+                    }}>
+                      <b>{text}</b>
+                      <span className="muted">{note}</span>
                     </button>
                   ))}
                 </div>

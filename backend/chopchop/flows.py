@@ -290,6 +290,11 @@ PRESETS = [
 ]
 
 
+# Presets kept as exported files (Workflows → Export): every *.chopchop.json in
+# flow_presets/ ships as an example, exactly as it was built in the editor.
+PRESETS += [Flow(**json.loads(p.read_text())) for p in sorted((Path(__file__).parent / "flow_presets").glob("*.chopchop.json"))]
+
+
 # ---------- running ----------
 
 WEIGHTS = {"input": 0.1, "separate": 6, "tool": 4, "slices": 0.5, "kit": 1.5, "bits": 1.5,

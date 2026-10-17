@@ -120,6 +120,10 @@ class Store:
         pads = project.setdefault("pads", [])
         pads.extend([None] * (PAD_SLOTS - len(pads)))
         project.setdefault("tempo", None)
+        # Choke (mute) groups per pad, 1–8 or None, and "one sound at a time" for all pads.
+        chokes = project.setdefault("pad_chokes", [])
+        chokes.extend([None] * (PAD_SLOTS - len(chokes)))
+        project.setdefault("choke_all", False)
         return project
 
     def _write(self, pid: str, project: dict) -> None:

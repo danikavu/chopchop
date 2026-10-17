@@ -33,6 +33,9 @@ interface Props {
   onShowGrid: (v: boolean) => void
   /** "Only this stem" mode: new chops belong to the focused track alone. */
   onlyTrack: boolean
+  /** S snaps to the nearest hit on the stem. */
+  smartSnap: boolean
+  onSmartSnap: (v: boolean) => void
 }
 
 const newId = () => Math.random().toString(16).slice(2, 12).padEnd(10, '0')
@@ -161,22 +164,24 @@ export function SlicePanel(p: Props) {
         <div className="stat">
           {shown.length} slice{shown.length === 1 ? '' : 's'} on {label(p.focused)}
           {own.length > 0 && <span className="muted"> ({own.length} only here)</span>}
-          {(p.onlyTrack ? own.length : p.slices.length) > 0 && (
-            <button className="link" onClick={() => p.onSlices(p.onlyTrack ? others : [], `Clear slices${where}`)}
-              title={p.onlyTrack ? `Clear the chops that are only on ${label(p.focused)}` : 'Clear every slice'}>
-              {p.onlyTrack ? 'clear these' : 'clear'}
-            </button>
-          )}
         </div>
         <p className="tip">
-          Drag on a waveform to draw a slice · drag edges to adjust · click to play ·{' '}
+          Drag on a waveform to draw a slice · drag edges to adjust · drag a slice to scroll ·{' '}
+          <kbd>Ctrl</kbd>/<kbd>⌘</kbd>+drag a slice to move it · click to play ·{' '}
           <kbd>S</kbd> split at playhead · <kbd>Del</kbd> delete · <kbd>Enter</kbd> save as sample ·{' '}
-          <kbd>←</kbd>/<kbd>→</kbd> step through slices · <kbd>L</kbd> loop the selected slice
+          <kbd>←</kbd>/<kbd>→</kbd> step through slices · <kbd>L</kbd> loop the selected slice · <kbd>Z</kbd> zoom onto it
         </p>
         <p className="tip">
           Hold <kbd>⌥/Alt</kbd> while drawing or pressing <kbd>S</kbd> to chop <b>only that stem</b> (dashed edges),
           or press <kbd>O</kbd> to stay in that mode. Those chops export from that stem alone, as{' '}
           <code>{label(p.focused).toLowerCase()}_only_001…</code>
+        </p>
+        <label className="check" title="S lands a little late when you tap along: this moves each new slice to the nearest hit on the stem (up to 150 ms before the tap, 50 ms after). The beat grid wins when 'Snap while editing' is on.">
+          <input type="checkbox" checked={p.smartSnap} onChange={(e) => p.onSmartSnap(e.target.checked)} />
+          Smart slice: <kbd>S</kbd> snaps to the nearest hit
+        </label>
+        <p className="tip">
+          Tap <kbd>S</kbd> while it plays to chop along: each slice runs until the next tap (and ends where you stop).
         </p>
         <button className="wide" onClick={p.onSaveSelectedAsSample} disabled={!p.selectedId}>
           Save selected slice as sample

@@ -93,9 +93,18 @@ class KitReq(BaseModel):
     replace: bool = True
 
 
+class ToPadsReq(BaseModel):
+    mode: Literal["all", "auto"] = "all"
+    count: int = Field(16, ge=1, le=64)  # auto: how many to pick
+    start_pad: int = Field(0, ge=0, le=63)  # first pad to fill (0 = A01)
+    uniqueness: float = Field(0.9, ge=0.3, le=1)
+
+
 class PadsReq(BaseModel):
     pads: list[str | None]
     label: str | None = Field(None, max_length=60)
+    chokes: list[int | None] | None = None  # choke group per pad (1–8), unchanged if left out
+    choke_all: bool | None = None  # every pad chokes every other: one sound at a time
 
 
 class SampleCreateReq(BaseModel):
@@ -368,6 +377,21 @@ def create_app(store: Store | None = None) -> FastAPI:
         t = track_or_404(get_project(pid), name)
         n = max(100, min(n, 50000))
         return {"duration": t["duration"], "peaks": audio.peaks(store.path(pid) / t["file"], n)}
+
+    onset_cache: dict[tuple[str, str], list[float]] = {}
+
+    @app.get("/api/projects/{pid}/tracks/{name}/onsets")
+    def track_onsets(pid: str, name: str):
+        """Every hit on a track (sensitive), for snapping slices tapped in by hand."""
+        t = track_or_404(get_project(pid), name)
+        key = (pid, t["file"])  # a new file (re-separated, trimmed) = new hits
+        if key not in onset_cache:
+            y, sr = audio.read_mono(store.path(pid) / t["file"], sr=None)
+            hits = slicing.detect_onsets(y, sr, sensitivity=0.6, min_gap=0.03, gate_db=-50)
+            if len(onset_cache) > 64:
+                onset_cache.pop(next(iter(onset_cache)))
+            onset_cache[key] = [round(float(x), 4) for x in hits]
+        return {"onsets": onset_cache[key]}
 
     @app.get("/api/projects/{pid}/tracks/{name}/window")
     def track_window(pid: str, name: str, start: float, end: float):
@@ -891,6 +915,19 @@ def create_app(store: Store | None = None) -> FastAPI:
             s.update(rec)
             return s
 
+    @app.post("/api/projects/{pid}/tracks/{name}/to-pads")
+    def slices_to_pads(pid: str, name: str, req: ToPadsReq):
+        """A track's slices onto the drum pads: all of them, or the most distinct (a job)."""
+        p = get_project(pid)
+        track_or_404(p, name)
+        if not any(not s.get("track") or s["track"] == name for s in p["slices"]):
+            raise HTTPException(400, f"no slices on {name}")
+
+        def work(job: Job):
+            return svc.slices_to_pads(pid, name, req.mode, req.count, req.start_pad, req.uniqueness, job.update)
+
+        return asdict(jobs.submit("to-pads", pid, work))
+
     @app.put("/api/projects/{pid}/pads")
     def put_pads(pid: str, req: PadsReq):
         if len(req.pads) != PAD_SLOTS:
@@ -901,7 +938,13 @@ def create_app(store: Store | None = None) -> FastAPI:
             if unknown:
                 raise HTTPException(400, f"unknown samples: {unknown}")
             p["pads"] = list(req.pads)
-            return {"pads": p["pads"]}
+            if req.chokes is not None:
+                if len(req.chokes) != PAD_SLOTS or any(c is not None and not 1 <= c <= 8 for c in req.chokes):
+                    raise HTTPException(400, f"expected {PAD_SLOTS} choke groups, each 1–8 or none")
+                p["pad_chokes"] = list(req.chokes)
+            if req.choke_all is not None:
+                p["choke_all"] = req.choke_all
+            return {"pads": p["pads"], "pad_chokes": p.get("pad_chokes"), "choke_all": p.get("choke_all", False)}
 
     @app.delete("/api/projects/{pid}/samples/{sid}")
     def delete_sample(pid: str, sid: str):

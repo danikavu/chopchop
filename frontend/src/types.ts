@@ -65,6 +65,10 @@ export interface Project {
   slices: Slice[]
   samples: Sample[]
   pads: (string | null)[]
+  /** Choke group per pad (1–8): a hit cuts off its group's ringing sounds. */
+  pad_chokes: (number | null)[]
+  /** Every pad chokes every other: one sound at a time. */
+  choke_all: boolean
   tempo: Tempo | null
 }
 

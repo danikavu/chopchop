@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type WaveSurfer from 'wavesurfer.js'
 import { api, onHistory, type UndoState } from '../api'
+import { finishLoop, looping as isLooping, loopTime, startLoop, stopLoop } from '../loopEngine'
 import type { Job, Meta, Part, Project, Sample, Slice } from '../types'
 import { fmtTime, gridPoints, isDrumTrack, isTextEntry, label, snapTo, stopPreview, trackColor, useJob } from '../util'
-import { DrumPads } from './DrumPads'
+import { DrumPads, PAD_KEYS } from './DrumPads'
 import { BeatGrid } from './BeatGrid'
 import { Logo } from './Brand'
 import { JobProgress, SEPARATION_STEPS } from './JobProgress'
@@ -95,9 +96,38 @@ export function ProjectView({ pid, meta, onBack }: Props) {
   const onlyRef = useRef(false)
   onlyRef.current = onlyStem || altHeld
   // Loop the selected chop while it plays (off by default, not remembered).
+  // S snaps to the nearest hit on the playing stem (taps land a little late); on by default.
+  const [smartSnap, setSmartSnapState] = useState(() => {
+    try {
+      return localStorage.getItem('chopchop.smartSnap') !== '0'
+    } catch {
+      return true
+    }
+  })
+  const smartSnapRef = useRef(smartSnap)
+  smartSnapRef.current = smartSnap
+  const setSmartSnap = (v: boolean) => {
+    setSmartSnapState(v)
+    try {
+      localStorage.setItem('chopchop.smartSnap', v ? '1' : '0')
+    } catch {
+      /* not remembered */
+    }
+  }
+  const onsets = useRef(new Map<string, number[]>()) // "track:file" -> hit times
+  // The slice the last S made while playing: it stays open until the next S (legato).
+  const tapRef = useRef<string | null>(null)
+  // ✋ Pan mode: a plain drag pans the view everywhere instead of drawing / moving.
+  const [panMode, setPanMode] = useState(false)
+  // Who the keyboard talks to: the editor (L, O, …) or the drum pads (whose keys include
+  // L and O). Hitting a pad hands it to the pads; clicking the lanes hands it back.
+  const [padKeys, setPadKeys] = useState(false)
   const [loop, setLoop] = useState(false)
   const loopRef = useRef(false)
   loopRef.current = loop
+  // A chop looping right now (Web Audio, see loopEngine): drives the play button and playhead.
+  const [looping, setLooping] = useState(false)
+  const loopChopRef = useRef<((s: Slice, keepPlace?: boolean) => void) | null>(null)
   const selectedRef = useRef<string | null>(null)
   selectedRef.current = selectedId
   // Selecting updates the ref at once: a chop clicked is played before React re-renders,
@@ -228,6 +258,7 @@ export function ProjectView({ pid, meta, onBack }: Props) {
     return () => {
       window.clearTimeout(saveTimer.current)
       stopPreview()
+      stopLoop()
     }
   }, [pid, reload, setSlices])
 
@@ -255,6 +286,35 @@ export function ProjectView({ pid, meta, onBack }: Props) {
   }, [duration])
 
   // Separation and stem tools share the progress banner.
+  // Slices → pads (a job: making the samples takes a moment).
+  const [padsJobId, setPadsJobId] = useState<string | null>(null)
+  const padsJob = useJob(padsJobId, (j: Job) => {
+    setPadsJobId(null)
+    if (j.status === 'error') setError(`Sending slices to pads failed: ${j.error}`)
+    else {
+      const r = j.result as { placed: number; first: string; last: string; of: number }
+      void reload()
+      flash(r.placed === 1 ? `1 slice on pad ${r.first}` : `${r.placed} of ${r.of} slices on pads ${r.first}–${r.last}`)
+    }
+  })
+  const PAD_COUNT = 64
+  const sendToPads = async (track: string, mode: 'all' | 'auto', count: number) => {
+    if (!project) return
+    const start = selectedPad ?? 0
+    // The pads it fills: from the start pad to the end of the last bank used.
+    const n = Math.min(count, PAD_COUNT - start)
+    const end = Math.min(PAD_COUNT, (Math.floor((start + n - 1) / 16) + 1) * 16)
+    const taken = project.pads.slice(start, end).filter(Boolean).length
+    if (taken && !window.confirm(`Replace what's on ${taken} pad${taken > 1 ? 's' : ''}? (You can undo it.)`)) return
+    setError(null)
+    try {
+      await flushSlices()
+      setPadsJobId((await api.slicesToPads(pid, track, { mode, count, start_pad: start })).id)
+    } catch (e) {
+      setError((e as Error).message)
+    }
+  }
+
   const sepJob = useJob(sepJobId, (j: Job) => {
     setSepJobId(null)
     const isTool = j.kind.startsWith('tool:')
@@ -304,30 +364,32 @@ export function ProjectView({ pid, meta, onBack }: Props) {
       next.setTime(timeRef.current)
       if (wasPlaying) void next.play()
     }
+    // A chop looping on the old lane carries on, from the new lane's audio.
+    const s = isLooping() ? slicesRef.current.find((x) => x.id === selectedRef.current) : undefined
+    if (s && (!s.track || s.track === name)) loopChopRef.current?.(s, true) // same place in the chop
+    else if (isLooping()) stopChopLoop()
   }, [])
 
   const laneEvents = useMemo(
     () => ({
       onFocus: setFocus,
       onTime: (name: string, t: number) => {
-        if (name !== focusedRef.current) return
+        if (name !== focusedRef.current || isLooping()) return // a loop drives the playhead itself
         setTime(t)
-        // Looping: crossing the chop's end jumps back to its start.
-        const s = loopTarget()
-        const ws = lanes.current.get(name)
-        if (s && ws?.isPlaying() && t >= s.end && t < s.end + 0.25) void ws.play(s.start, s.end)
+      },
+      onSeek: () => {
+        if (isLooping()) stopChopLoop() // clicked elsewhere on the waveform
+      },
+      onPlaySlice: (_name: string, id: string) => {
+        const s = slicesRef.current.find((x) => x.id === id)
+        if (s) loopChopRef.current?.(s)
       },
       onPlayState: (name: string, p: boolean) => {
         if (name !== focusedRef.current) return
-        // A chop played to its end stops by itself: start it again (a pause elsewhere is the user's).
-        const s = !p ? loopTarget() : null
-        const ws = lanes.current.get(name)
-        if (s && ws && Math.abs(ws.getCurrentTime() - s.end) < 0.06) {
-          void ws.play(s.start, s.end)
-          return
-        }
         setPlaying(p)
+        if (!p && tapRef.current) closeTapRef.current(lanes.current.get(name)?.getCurrentTime() ?? timeRef.current)
       },
+      onZoomWheel: (factor: number, x: number) => zoomWheelRef.current(factor, x),
       onScroll: (name: string, left: number) => {
         if (Math.abs(left - lastScroll.current) < 1) return
         lastScroll.current = left
@@ -371,13 +433,97 @@ export function ProjectView({ pid, meta, onBack }: Props) {
     return s && (!s.track || s.track === focusedRef.current) ? s : null
   }
 
+  /** Play a chop on the focused lane: looped (gapless, nothing past its end) in loop mode,
+   * once otherwise. */
+  const playChop = (s: Slice, keepPlace = false) => {
+    const ws = focusedLane()
+    if (!loopRef.current) {
+      stopChopLoop()
+      void ws?.play(s.start, s.end)
+      return
+    }
+    ws?.pause()
+    const url = api.trackWindowUrl(pid, focusedRef.current, s.start, s.end)
+    startLoop(url, s.start, () => setLooping(false), keepPlace)
+      .then((ok) => ok && setLooping(true))
+      .catch((e) => setError(`Couldn't loop that chop: ${(e as Error).message}`))
+  }
+  loopChopRef.current = playChop
+
+  /** Ctrl/⌘ + wheel (or a trackpad pinch): zoom, keeping the time under the cursor in place.
+   * x: the cursor's position in the waveform area, in pixels. */
+  const zoomWheel = (factor: number, x: number) => {
+    const z0 = zoomRef.current
+    const z = Math.min(MAX_ZOOM, Math.max(fitZoom, z0 * factor))
+    if (Math.abs(z - z0) < 1e-6) return
+    const at = (lastScroll.current + x) / z0
+    zoomRef.current = z
+    setZoom(z)
+    window.setTimeout(() => focusedLane()?.setScroll(Math.max(0, at * z - x)), 0)
+  }
+  const zoomWheelRef = useRef(zoomWheel)
+  zoomWheelRef.current = zoomWheel
+
+  // Z: zoom onto the looping / selected chop; Z again goes back to the view before.
+  const zoomBack = useRef<{ zoom: number; scroll: number; id: string } | null>(null)
+  const zoomToChop = () => {
+    const back = zoomBack.current
+    if (back && back.id === selectedRef.current) {
+      zoomBack.current = null
+      setZoom(back.zoom)
+      window.setTimeout(() => focusedLane()?.setScroll(back.scroll), 50)
+      return
+    }
+    const s = slicesRef.current.find((x) => x.id === selectedRef.current)
+    if (!s) {
+      flash('Select a chop first, then press Z to zoom onto it')
+      return
+    }
+    const width = Math.max(1, laneWidth - HEAD_W)
+    const z = Math.min(MAX_ZOOM, Math.max(fitZoom, (width * 0.8) / Math.max(0.01, s.end - s.start)))
+    // Hopping from one chop to the next keeps the way back to where you started.
+    zoomBack.current = { zoom: back?.zoom ?? zoomRef.current, scroll: back?.scroll ?? lastScroll.current, id: s.id }
+    setZoom(z)
+    // Scroll once the lanes have re-rendered at the new zoom: the chop centred.
+    window.setTimeout(() => {
+      const left = s.start * z - (width - (s.end - s.start) * z) / 2
+      focusedLane()?.setScroll(Math.max(0, left))
+    }, 50)
+  }
+
+  function stopChopLoop() {
+    stopLoop()
+    setLooping(false)
+  }
+
+  /** Loop mode off while a chop loops: it finishes this pass, then stops. */
+  const toggleLoop = () => {
+    if (loopRef.current && isLooping()) finishLoop()
+    setLoop((v) => !v)
+  }
+
+  // While a chop loops, the playhead follows the loop (the lane itself is paused).
+  useEffect(() => {
+    if (!looping) return
+    let raf = 0
+    const tick = () => {
+      const t = loopTime()
+      if (t !== null) {
+        timeRef.current = t
+        setTime(t)
+      }
+      raf = requestAnimationFrame(tick)
+    }
+    raf = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(raf)
+  }, [looping])
+
   const togglePlay = () => {
+    if (isLooping()) return stopChopLoop()
     const ws = focusedLane()
     if (!ws) return
-    // Looping, with the playhead outside the selected chop: play the chop.
     const s = loopTarget()
-    const t = ws.getCurrentTime()
-    if (s && !ws.isPlaying() && (t < s.start || t >= s.end - 0.01)) void ws.play(s.start, s.end)
+    if (s && !ws.isPlaying()) playChop(s)
     else void ws.playPause()
   }
 
@@ -392,8 +538,28 @@ export function ProjectView({ pid, meta, onBack }: Props) {
     [slices, trackNames],
   )
 
+  /** The hit nearest a tap on the focused stem: up to 150 ms before it (taps land late) or
+   * 50 ms after; the tap itself if there's none, or the hits aren't loaded yet. */
+  const snapToHit = (t: number) => {
+    const t0 = project?.tracks.find((x) => x.name === focusedRef.current)
+    const hits = t0 ? onsets.current.get(`${t0.name}:${t0.file}`) : undefined
+    let best = t
+    let gap = Infinity
+    for (const h of hits ?? []) {
+      if (h < t - 0.15 || h > t + 0.05) continue
+      if (Math.abs(h - t) < gap) {
+        gap = Math.abs(h - t)
+        best = h
+      }
+    }
+    return best
+  }
+
   const splitAtPlayhead = (only = onlyRef.current) => {
-    const t = snapRef.current ? snapTo(snapRef.current, timeRef.current) : timeRef.current
+    // The beat grid wins when "snap while editing" is on; else the nearest hit (smart slice).
+    const raw = timeRef.current
+    const t = snapRef.current ? snapTo(snapRef.current, raw) : smartSnapRef.current ? snapToHit(raw) : raw
+    const playing = focusedLane()?.isPlaying() ?? false
     const all = slicesRef.current
     const track = focusedRef.current
     // Only-this-stem splits work on the focused track's own chops, else on the shared ones.
@@ -402,20 +568,48 @@ export function ProjectView({ pid, meta, onBack }: Props) {
     const where = only ? ` on ${track} only` : ''
     const hit = cur.find((s) => s.start < t - 0.005 && s.end > t + 0.005)
     if (hit) {
+      // Splitting the slice the last tap opened is legato: it ends where this one starts.
       const right = { id: newId(), start: t, end: hit.end, ...own }
       setSlices([...all.filter((s) => s.id !== hit.id), { ...hit, end: t }, right], `Split slice${where}`)
       setSelectedId(right.id)
+      if (playing) tapRef.current = right.id
     } else {
       const next = cur.find((s) => s.start > t)
-      const end = Math.min(next ? next.start : t + 0.5, project?.duration ?? t + 0.5)
+      // While playing, a tapped slice stays open (to the next slice / the end) until the
+      // next tap ends it; stopped, it's a short default you can drag.
+      const duration = project?.duration ?? t + 0.5
+      const end = Math.min(next ? next.start : playing ? duration : t + 0.5, duration)
       if (end - t < 0.01) return
       const s = { id: newId(), start: t, end, ...own }
       setSlices([...all, s], `Add slice${where}`)
       setSelectedId(s.id)
+      tapRef.current = playing ? s.id : null
     }
   }
 
+  /** Playback stopped: the slice the last tap left open ends here. */
+  const closeTap = (at: number) => {
+    const id = tapRef.current
+    tapRef.current = null
+    const s = slicesRef.current.find((x) => x.id === id)
+    if (s && at > s.start + 0.01 && at < s.end - 0.005) {
+      setSlices(slicesRef.current.map((x) => (x.id === id ? { ...x, end: at } : x)), 'End slice at stop')
+    }
+  }
+  const closeTapRef = useRef(closeTap)
+  closeTapRef.current = closeTap
+
+  // Hits of the focused stem, for smart slicing (fetched once per track file).
+  const focusedTrack = project?.tracks.find((x) => x.name === focused)
+  useEffect(() => {
+    if (!focusedTrack) return
+    const key = `${focusedTrack.name}:${focusedTrack.file}`
+    if (onsets.current.has(key)) return
+    api.trackOnsets(pid, focusedTrack.name).then((r) => onsets.current.set(key, r.onsets)).catch(() => undefined)
+  }, [pid, focusedTrack?.name, focusedTrack?.file]) // eslint-disable-line react-hooks/exhaustive-deps
+
   const deleteSelected = () => {
+    if (isLooping()) stopChopLoop()
     if (!selectedId) return
     const cur = slicesRef.current
     const i = cur.findIndex((s) => s.id === selectedId)
@@ -434,7 +628,7 @@ export function ProjectView({ pid, meta, onBack }: Props) {
       const w = ws.getWidth()
       const x = next.start * zoom
       if (x < lastScroll.current || x > lastScroll.current + w - 40) ws.setScroll(Math.max(0, x - w / 3))
-      void ws.play(next.start, next.end)
+      playChop(next)
     }
   }
 
@@ -468,14 +662,28 @@ export function ProjectView({ pid, meta, onBack }: Props) {
         return
       }
       if (e.metaKey || e.ctrlKey || e.altKey) return
+      if (e.code === 'Backquote') {
+        e.preventDefault()
+        setPadKeys((v) => !v)
+        return
+      }
+      if (padKeys && PAD_KEYS.includes(e.key.toLowerCase())) return // the pads play these
       switch (e.key) {
         case 'o':
         case 'O':
           setOnlyStem((v) => !v)
           break
+        case 'h':
+        case 'H':
+          setPanMode((v) => !v)
+          break
+        case 'z':
+        case 'Z':
+          zoomToChop()
+          break
         case 'l':
         case 'L':
-          setLoop((v) => !v)
+          toggleLoop()
           break
         case ' ':
           e.preventDefault()
@@ -503,6 +711,7 @@ export function ProjectView({ pid, meta, onBack }: Props) {
           break
         case 'Escape':
           setSelectedId(null)
+          if (isLooping()) stopChopLoop()
           break
         case 'b':
         case 'B':
@@ -687,6 +896,11 @@ export function ProjectView({ pid, meta, onBack }: Props) {
             flash('Workflow done')
           }} />
       )}
+      {padsJobId && (
+        <div className="banner">
+          <JobProgress job={padsJob} fallback="Sending slices to the pads…" />
+        </div>
+      )}
       {sepJobId && (
         <div className="banner">
           <JobProgress job={sepJob} steps={SEPARATION_STEPS} fallback="Starting separation…" />
@@ -695,8 +909,8 @@ export function ProjectView({ pid, meta, onBack }: Props) {
 
       <div className="workspace">
         <div className="main-col">
-          <div className="transport">
-            <button className="play" onClick={togglePlay} title="Play / pause (Space)">{playing ? '❚❚' : '▶'}</button>
+          <div className="transport" onPointerDown={() => setPadKeys(false)}>
+            <button className="play" onClick={togglePlay} title="Play / pause (Space)">{playing || looping ? '❚❚' : '▶'}</button>
             <span className="time">{fmtTime(time)}</span>
             <span className="muted">playing: <b style={{ color: trackColor(focused) }}>{label(focused)}</b></span>
             <div className="spacer" />
@@ -705,7 +919,23 @@ export function ProjectView({ pid, meta, onBack }: Props) {
               title={project.tempo?.beats.length ? 'Show / hide the beat grid lines' : 'Detect the tempo first (BPM at the top)'}>
               Grid
             </button>
-            <button className={`grid-toggle ${loop ? 'on' : ''}`} onClick={() => setLoop((v) => !v)}
+            {(() => {
+              // In "only this stem" mode: just the focused stem's own chops.
+              const only = onlyStem || altHeld
+              const gone = only ? slices.filter((x) => x.track === focused) : slices
+              return (
+                <button disabled={!gone.length}
+                  title={only ? `Clear the chops that are only on ${label(focused)} (undoable)` : 'Clear every chop (undoable)'}
+                  onClick={() => {
+                    if (isLooping()) stopChopLoop()
+                    setSlices(only ? slices.filter((x) => x.track !== focused) : [], only ? `Clear slices on ${focused} only` : 'Clear slices')
+                    setSelectedId(null)
+                  }}>
+                  {only ? `Clear ${label(focused)} chops` : 'Clear chops'}
+                </button>
+              )
+            })()}
+            <button className={`grid-toggle ${loop ? 'on' : ''}`} onClick={toggleLoop}
               title="Loop the selected chop while it plays (L)">
               Loop
             </button>
@@ -716,6 +946,12 @@ export function ProjectView({ pid, meta, onBack }: Props) {
             <button onClick={() => splitAtPlayhead()} title="Split / add slice at playhead (S · ⌥S on this stem only)">Split</button>
             <button onClick={deleteSelected} disabled={!selectedId} title="Delete selected slice (Del)">Delete</button>
             {selected && <span className="muted">{fmtTime(selected.start)} – {fmtTime(selected.end)}</span>}
+            <button className={`grid-toggle ${panMode ? 'on' : ''}`} onClick={() => setPanMode((v) => !v)}
+              title="Pan mode (H): drag anywhere to move the view left / right. Without it: Shift+drag, middle-button drag, or drag a slice. Ctrl/⌘+scroll zooms.">
+              ✋
+            </button>
+            <button onClick={zoomToChop} disabled={!selectedId}
+              title={zoomBack.current ? 'Back to the view before (Z)' : 'Zoom onto the looping / selected chop (Z)'}>⤢</button>
             <label className="zoom" title="Zoom">
               <span>zoom</span>
               <input type="range" min={0} max={1} step={0.001} value={isFinite(zoomPos) ? zoomPos : 0}
@@ -723,7 +959,7 @@ export function ProjectView({ pid, meta, onBack }: Props) {
             </label>
           </div>
 
-          <div className="lanes" ref={lanesBox}>
+          <div className="lanes" ref={lanesBox} onPointerDown={() => setPadKeys(false)}>
             {tracks.map((t, i) => (
               <TrackLane
                 key={`${t.name}:${t.file}:${t.duration}`}
@@ -734,6 +970,9 @@ export function ProjectView({ pid, meta, onBack }: Props) {
                 slices={laneSlices.get(t.name) ?? slices}
                 selectedId={selectedId}
                 focused={focused === t.name}
+                panMode={panMode}
+                onToPads={(track, mode, count) => void sendToPads(track, mode, count)}
+                padsFrom={`${'ABCD'[Math.floor((selectedPad ?? 0) / 16)]}${String(((selectedPad ?? 0) % 16) + 1).padStart(2, '0')}`}
                 exportChecked={exportTracks.includes(t.name)}
                 timeline={i === 0}
                 showScrollbar={i === tracks.length - 1}
@@ -774,6 +1013,17 @@ export function ProjectView({ pid, meta, onBack }: Props) {
             selectedPad={selectedPad}
             onSelectPad={setSelectedPad}
             onPadsChange={setPads}
+            padKeys={padKeys}
+            onPadKeys={setPadKeys}
+            chokes={project.pad_chokes ?? project.pads.map(() => null)}
+            chokeAll={!!project.choke_all}
+            onChokesChange={(chokes, chokeAll, label) => {
+              setProject((p) => (p ? { ...p, pad_chokes: chokes, choke_all: chokeAll } : p))
+              api.savePads(pid, project.pads, label, { chokes, choke_all: chokeAll }).catch((e) => {
+                setError(`Saving choke groups failed: ${e.message}`)
+                void reload()
+              })
+            }}
             onKitBuilt={async () => {
               await reload()
               flash('Auto kit loaded onto the pads')
@@ -863,6 +1113,8 @@ export function ProjectView({ pid, meta, onBack }: Props) {
               showGrid={showBeats}
               onShowGrid={setShowBeats}
               onlyTrack={onlyStem || altHeld}
+              smartSnap={smartSnap}
+              onSmartSnap={setSmartSnap}
               onDownbeat={async (downbeat) => {
                 try {
                   const tempo = await api.setTempo(pid, { downbeat })

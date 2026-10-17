@@ -515,3 +515,10 @@ body { background: var(--bg); }
 .catalog-name { font-weight: 600; }
 .catalog-pick { display: flex; flex-direction: column; gap: 10px; border: 1px solid var(--line); padding: 10px; }
 .picker-item.pickable { color: var(--text); }
+
+/* Choke group badge on a pad */
+.pad-choke { position: absolute; top: 7px; right: 30px; font-size: 10px; padding: 0 4px; border: 1px solid var(--accent); color: var(--accent); }
+
+/* The keyboard plays the pads: say so, and show which keys */
+.pads-section.keys-on .pad-grid { box-shadow: 0 0 0 1px var(--accent); }
+.pads-section:not(.keys-on) .pad-key { opacity: 0.35; }

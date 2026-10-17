@@ -126,12 +126,22 @@ Every stem gets its own lane under the original mix, all on one timeline.
 - **Transport:**
   - play / pause, and which lane is playing (click a lane's name to switch);
   - **Grid** shows the red beat grid;
+  - **Clear chops** removes every chop (undoable);
   - **Loop** repeats the selected chop;
   - **Only <stem>** chops the focused stem alone;
   - **Split** / **Delete** for slices;
   - the **zoom** slider.
 - **Lanes:** each lane has an **export** tick (include it when exporting slices), the
-  **✦** stem tools, and **×** to remove it.
+  **✦** stem tools, **⊞** to send its slices to the pads, and **×** to remove it.
+- **Slices → pads (⊞):** the lane's slices (the shared ones plus its own) become samples on
+  the drum pads, starting at the selected pad (or A01):
+  - **All N slices** in time order, as many as fit;
+  - **Auto-pick 16 / 32**: near-identical slices are grouped and the cleanest, most distinct
+    are kept (each pad shows how many slices it stands for); on a drum lane they're laid out
+    kick / snare / hat / perc.
+
+  It replaces the pads in the banks it fills (asking first if they're taken), reuses the
+  samples a previous send made, and undoes in one step.
 - **Stem tools (✦)** run on one stem and add new lanes, as one undo step each:
   - **Split drums** (MDX23C DrumSep) makes `drums_kick`, `drums_snare`, `drums_toms`,
     `drums_hihat`, `drums_ride` and `drums_crash`;
@@ -157,13 +167,24 @@ The **Slice** tab offers three ways to chop:
 - **Beat grid:** pick a step (1/16 up to 4 bars) and **Chop to grid**. That gives one
   slice per cell, e.g. 1-bar loops. **Snap slices** moves every edge onto the grid, and
   **Snap while editing** does the same as you drag, draw or split.
-- **By hand:** drag on any waveform to draw a slice, drag its edges or body to adjust it,
-  press **S** to split at the playhead.
+- **By hand:** drag on an empty part of a waveform to draw a slice, drag its edges to
+  resize it, and **Ctrl+drag** (or **⌘+drag**) it to move it. **S** splits at the playhead.
+- **Tapping along:** press **S** in time while the track plays. Each slice runs until your
+  next tap (legato), and the last one ends where you stop. **Smart slice** (on by default,
+  in the Slice panel) moves each tap onto the nearest hit on that stem, so taps don't have
+  to be precise: it looks up to 150 ms before the tap and 50 ms after.
+
+**Moving around when zoomed in:** drag a slice, **Shift+drag** or **middle-button drag**
+anywhere, or switch on **✋ pan mode** (**H**) so that every drag pans. Two-finger swipes and
+Shift+scroll move the view too, and **Ctrl/⌘+scroll** (or a pinch) zooms around the cursor.
 
 Slices are colour-coded so you can see where one chop ends and the next starts. They appear
 on every lane, so you can audition the same chop across all stems. Click one to play it, or
 use **← / →** to step through them. With **Loop** on (**L**), the selected chop keeps
-repeating. **Enter** saves the selected slice as a sample.
+repeating, gaplessly and without a hint of the next chop. Switching lanes while it loops
+carries on from the same point in the chop, on the new lane's audio. Space or Esc stops it, and
+turning Loop off lets the current pass finish. **Z** (or ⤢ by the zoom slider) zooms onto
+the chop, centred; press it again to go back to the view you had. **Enter** saves the selected slice as a sample.
 
 ### Fixing the beat grid
 
@@ -185,7 +206,7 @@ All of these can be undone.
 ![Chops on the vocals only](docs/screenshots/only-stem.png)
 
 Hold **⌥/Alt** while drawing or pressing **S**, or press **O** (or **Only <stem>**) to stay
-in that mode, where **Detect**, **Chop to grid** and **clear** also work on just the focused
+in that mode, where **Detect**, **Chop to grid** and **Clear chops** also work on just the focused
 stem. These chops have dashed edges and appear only on their stem's lane (on the vocals
 above). They export from that stem only, as `vocals_only_001.wav` …, so the shared chops keep
 their lined-up numbering. Removing the stem removes its chops.
@@ -276,6 +297,17 @@ The pads have 4 banks × 16, laid out like an MPC.
 - Each pad shows how often its sound occurs in the song (`×163`) and its note, if it has one.
 - **Playing:** click a pad, or use the keys on the pads, bottom row to top: **M , . /**,
   **J K L ;**, **U I O P**, **7 8 9 0**. A closed hat chokes a ringing open one.
+- **Keyboard: pads or editor.** Some pad keys are editor shortcuts too (**L** loop, **O** only
+  this stem), so the keyboard talks to one at a time. Hitting a pad hands it to the pads (the
+  grid gets an outline and **⌨ Pad keys** lights up); clicking the lanes or the transport hands
+  it back to the editor. **⌨ Pad keys** or <kbd>`</kbd> switches by hand. Editor keys that
+  aren't pad keys (Space, S, Z, H, B, arrows) work either way.
+- **Choke:** like an MPC mute group, a hit cuts off sounds still ringing in its group.
+  - **Choke all**: every pad cuts every other, so only one sound plays at a time.
+  - **Per pad**: select a pad and pick a **choke group** (1–8); pads in the same group cut
+    each other (badge **C1**…). **Clear chokes** removes them all.
+  - Chokes fade out in a few milliseconds, so they don't click, and they're saved with the
+    project (and undoable).
 - **Loading:** drag a sample onto a pad, or select a pad and press ⊞ on a sample. Drag pads
   onto each other to swap them; right-click to clear.
 - **Export pads** writes `A01_kick_04.wav` … in pad order, with the same **→ C** option.
@@ -380,7 +412,9 @@ How it works:
 
 Stems of a stem are named after it (`instrumental_drums`) and never replace existing tracks.
 New stems, chops and samples stay in the project, so you can keep working on them. **Save**
-keeps a workflow for later (`data/flows.json`); three examples are there to start from.
+keeps a workflow for later (`data/flows.json`). Four examples are there to start from,
+including **Starter Pack Kit**: a drum kit, sound bits, loops, vocal chops and the acapella
+from one track.
 
 ### Sharing workflows
 
@@ -520,6 +554,10 @@ chopchop benchmark "path/to/a typical song.wav"     # or: python scripts/run.py 
 | <kbd>⌥/Alt</kbd> + drag, <kbd>⌥/Alt</kbd>+<kbd>S</kbd> | chop the focused stem only |
 | <kbd>O</kbd> | toggle "only this stem" mode |
 | <kbd>L</kbd> | toggle loop for the selected chop |
+| <kbd>Z</kbd> | zoom onto the looping / selected chop; again to zoom back |
+| <kbd>H</kbd> | toggle pan mode (every drag pans the view) |
+| <kbd>Shift</kbd> + drag, middle-button drag | pan the view |
+| <kbd>Ctrl/⌘</kbd> + scroll | zoom around the cursor |
 | <kbd>←</kbd> / <kbd>→</kbd> | step through slices and play them |
 | <kbd>Del</kbd> | delete the selected slice |
 | <kbd>Enter</kbd> | save the selected slice as a sample |
@@ -527,7 +565,8 @@ chopchop benchmark "path/to/a typical song.wav"     # or: python scripts/run.py 
 | <kbd>Esc</kbd> | deselect |
 | <kbd>⌘Z</kbd> / <kbd>Ctrl+Z</kbd> | undo |
 | <kbd>⌘⇧Z</kbd> / <kbd>Ctrl+Shift+Z</kbd> or <kbd>Ctrl+Y</kbd> | redo |
-| pad keys | play the drum pads (see [Drum pads](#7-drum-pads)) |
+| pad keys | play the drum pads, once they have the keyboard (see [Drum pads](#7-drum-pads)) |
+| <kbd>`</kbd> | give the keyboard to the pads / back to the editor |
 
 **Undo** also lives in the top bar (↶ ↷), and the tooltips name the step, e.g. "Undo Delete
 slice".

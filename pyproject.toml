@@ -34,5 +34,8 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 where = ["backend"]
 
+[tool.setuptools.package-data]
+chopchop = ["flow_presets/*.chopchop.json"]
+
 [tool.pytest.ini_options]
 testpaths = ["backend/tests"]
