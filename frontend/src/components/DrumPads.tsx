@@ -12,7 +12,7 @@ const BANKS = ['A', 'B', 'C', 'D']
 
 // Pad n (1-16) → keyboard key. Right-hand block, laid out like the pads (13-16 on
 // top), chosen so it never collides with the slicing shortcuts (Space, S, Del, …).
-const PAD_KEYS = ['m', ',', '.', '/', 'j', 'k', 'l', ';', 'u', 'i', 'o', 'p', '7', '8', '9', '0']
+export const PAD_KEYS = ['m', ',', '.', '/', 'j', 'k', 'l', ';', 'u', 'i', 'o', 'p', '7', '8', '9', '0']
 // Screen order: MPC pads 13-16 on the top row, 1-4 at the bottom.
 const GRID = [12, 13, 14, 15, 8, 9, 10, 11, 4, 5, 6, 7, 0, 1, 2, 3]
 
@@ -31,6 +31,9 @@ interface Props {
   chokes: (number | null)[]
   chokeAll: boolean
   onChokesChange: (chokes: (number | null)[], chokeAll: boolean, label: string) => void
+  /** The keyboard plays the pads (else it drives the editor: L = loop, O = only this stem…). */
+  padKeys: boolean
+  onPadKeys: (on: boolean) => void
   onKitBuilt: () => Promise<void>
 }
 
@@ -86,6 +89,7 @@ export function DrumPads(p: Props) {
   const hitRef = useRef(hit)
   hitRef.current = hit
   useEffect(() => {
+    if (!p.padKeys) return
     const onKey = (e: KeyboardEvent) => {
       if (e.repeat || e.metaKey || e.ctrlKey || e.altKey) return
       if (isTextEntry(e.target)) return
@@ -97,7 +101,7 @@ export function DrumPads(p: Props) {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [bank])
+  }, [bank, p.padKeys])
 
   const setPad = (i: number, sid: string | null) => {
     const next = [...p.pads]
@@ -168,7 +172,7 @@ export function DrumPads(p: Props) {
   const busy = jobId !== null
 
   return (
-    <div className="pads-section">
+    <div className={`pads-section ${p.padKeys ? 'keys-on' : ''}`}>
       <div className="pads-bar">
         <h2>Drum pads</h2>
         <div className="banks">
@@ -179,6 +183,12 @@ export function DrumPads(p: Props) {
             </button>
           ))}
         </div>
+        <button className={`grid-toggle ${p.padKeys ? 'on' : ''}`} onClick={() => p.onPadKeys(!p.padKeys)}
+          title={p.padKeys
+            ? 'The keyboard plays the pads (L and O too). Click the lanes, or press `, to give it back to the editor.'
+            : 'Play the pads from the keyboard (or just hit a pad). Until then the keys drive the editor.'}>
+          ⌨ Pad keys
+        </button>
         <div className="spacer" />
         <label className="check" title="Every pad cuts off the one still ringing: one sound at a time">
           <input type="checkbox" checked={p.chokeAll}
@@ -237,6 +247,7 @@ export function DrumPads(p: Props) {
                   if (e.button !== 0) return
                   hit(i)
                   p.onSelectPad(i)
+                  p.onPadKeys(true) // playing the pads: the keyboard plays them too
                 }}
                 onDragStart={(e) => {
                   e.dataTransfer.setData(PAD_MIME, String(i))
@@ -322,9 +333,9 @@ export function DrumPads(p: Props) {
           </button>
           {busy && <JobProgress job={job} fallback="Working…" />}
           <p className="tip">
-            Click or press <kbd>M</kbd> <kbd>,</kbd> <kbd>.</kbd> <kbd>/</kbd> · <kbd>J</kbd>–<kbd>;</kbd> ·{' '}
-            <kbd>U</kbd>–<kbd>P</kbd> · <kbd>7</kbd>–<kbd>0</kbd> to play. Drag samples from below onto a pad, drag pads to
-            swap, right-click to clear.
+            Click a pad to play it: the keyboard then plays the pads too (<kbd>M</kbd> <kbd>,</kbd> <kbd>.</kbd>{' '}
+            <kbd>/</kbd> · <kbd>J</kbd>–<kbd>;</kbd> · <kbd>U</kbd>–<kbd>P</kbd> · <kbd>7</kbd>–<kbd>0</kbd>) until you click
+            the lanes or press <kbd>`</kbd>. Drag samples from below onto a pad, drag pads to swap, right-click to clear.
           </p>
           {result && <ExportResultLine result={result} noun="sounds" />}
           {error && <div className="error">{error}</div>}

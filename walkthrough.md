@@ -297,6 +297,11 @@ The pads have 4 banks × 16, laid out like an MPC.
 - Each pad shows how often its sound occurs in the song (`×163`) and its note, if it has one.
 - **Playing:** click a pad, or use the keys on the pads, bottom row to top: **M , . /**,
   **J K L ;**, **U I O P**, **7 8 9 0**. A closed hat chokes a ringing open one.
+- **Keyboard: pads or editor.** Some pad keys are editor shortcuts too (**L** loop, **O** only
+  this stem), so the keyboard talks to one at a time. Hitting a pad hands it to the pads (the
+  grid gets an outline and **⌨ Pad keys** lights up); clicking the lanes or the transport hands
+  it back to the editor. **⌨ Pad keys** or <kbd>`</kbd> switches by hand. Editor keys that
+  aren't pad keys (Space, S, Z, H, B, arrows) work either way.
 - **Choke:** like an MPC mute group, a hit cuts off sounds still ringing in its group.
   - **Choke all**: every pad cuts every other, so only one sound plays at a time.
   - **Per pad**: select a pad and pick a **choke group** (1–8); pads in the same group cut
@@ -560,7 +565,8 @@ chopchop benchmark "path/to/a typical song.wav"     # or: python scripts/run.py 
 | <kbd>Esc</kbd> | deselect |
 | <kbd>⌘Z</kbd> / <kbd>Ctrl+Z</kbd> | undo |
 | <kbd>⌘⇧Z</kbd> / <kbd>Ctrl+Shift+Z</kbd> or <kbd>Ctrl+Y</kbd> | redo |
-| pad keys | play the drum pads (see [Drum pads](#7-drum-pads)) |
+| pad keys | play the drum pads, once they have the keyboard (see [Drum pads](#7-drum-pads)) |
+| <kbd>`</kbd> | give the keyboard to the pads / back to the editor |
 
 **Undo** also lives in the top bar (↶ ↷), and the tooltips name the step, e.g. "Undo Delete
 slice".

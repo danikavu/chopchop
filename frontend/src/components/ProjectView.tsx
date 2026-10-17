@@ -4,7 +4,7 @@ import { api, onHistory, type UndoState } from '../api'
 import { finishLoop, looping as isLooping, loopTime, startLoop, stopLoop } from '../loopEngine'
 import type { Job, Meta, Part, Project, Sample, Slice } from '../types'
 import { fmtTime, gridPoints, isDrumTrack, isTextEntry, label, snapTo, stopPreview, trackColor, useJob } from '../util'
-import { DrumPads } from './DrumPads'
+import { DrumPads, PAD_KEYS } from './DrumPads'
 import { BeatGrid } from './BeatGrid'
 import { Logo } from './Brand'
 import { JobProgress, SEPARATION_STEPS } from './JobProgress'
@@ -119,6 +119,9 @@ export function ProjectView({ pid, meta, onBack }: Props) {
   const tapRef = useRef<string | null>(null)
   // ✋ Pan mode: a plain drag pans the view everywhere instead of drawing / moving.
   const [panMode, setPanMode] = useState(false)
+  // Who the keyboard talks to: the editor (L, O, …) or the drum pads (whose keys include
+  // L and O). Hitting a pad hands it to the pads; clicking the lanes hands it back.
+  const [padKeys, setPadKeys] = useState(false)
   const [loop, setLoop] = useState(false)
   const loopRef = useRef(false)
   loopRef.current = loop
@@ -659,6 +662,12 @@ export function ProjectView({ pid, meta, onBack }: Props) {
         return
       }
       if (e.metaKey || e.ctrlKey || e.altKey) return
+      if (e.code === 'Backquote') {
+        e.preventDefault()
+        setPadKeys((v) => !v)
+        return
+      }
+      if (padKeys && PAD_KEYS.includes(e.key.toLowerCase())) return // the pads play these
       switch (e.key) {
         case 'o':
         case 'O':
@@ -900,7 +909,7 @@ export function ProjectView({ pid, meta, onBack }: Props) {
 
       <div className="workspace">
         <div className="main-col">
-          <div className="transport">
+          <div className="transport" onPointerDown={() => setPadKeys(false)}>
             <button className="play" onClick={togglePlay} title="Play / pause (Space)">{playing || looping ? '❚❚' : '▶'}</button>
             <span className="time">{fmtTime(time)}</span>
             <span className="muted">playing: <b style={{ color: trackColor(focused) }}>{label(focused)}</b></span>
@@ -950,7 +959,7 @@ export function ProjectView({ pid, meta, onBack }: Props) {
             </label>
           </div>
 
-          <div className="lanes" ref={lanesBox}>
+          <div className="lanes" ref={lanesBox} onPointerDown={() => setPadKeys(false)}>
             {tracks.map((t, i) => (
               <TrackLane
                 key={`${t.name}:${t.file}:${t.duration}`}
@@ -1004,6 +1013,8 @@ export function ProjectView({ pid, meta, onBack }: Props) {
             selectedPad={selectedPad}
             onSelectPad={setSelectedPad}
             onPadsChange={setPads}
+            padKeys={padKeys}
+            onPadKeys={setPadKeys}
             chokes={project.pad_chokes ?? project.pads.map(() => null)}
             chokeAll={!!project.choke_all}
             onChokesChange={(chokes, chokeAll, label) => {
